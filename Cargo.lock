@@ -3555,6 +3555,7 @@ dependencies = [
  "pallet-aura",
  "pallet-balances",
  "pallet-deip",
+ "pallet-deip-proposal",
  "pallet-grandpa",
  "pallet-multisig",
  "pallet-randomness-collective-flip",
@@ -3763,6 +3764,21 @@ dependencies = [
 
 [[package]]
 name = "pallet-deip"
+version = "3.0.0"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "pallet-timestamp",
+ "parity-scale-codec",
+ "serde",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
+name = "pallet-deip-proposal"
 version = "3.0.0"
 dependencies = [
  "frame-support",

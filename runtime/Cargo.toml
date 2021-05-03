@@ -28,6 +28,7 @@ serde = { features = ['derive'], optional = true, version = '1.0.119' }
 pallet-template = { path = '../pallets/template', default-features = false, version = '3.0.0' }
 pallet-deip = { path = "../pallets/deip", default-features = false }
 deip-runtime-api = {default-features = false, path = "../pallets/deip/runtime-api" }
+pallet-deip-proposal = { path = "../pallets/deip_proposal", default-features = false }
 
 # Substrate dependencies
 frame-benchmarking = { default-features = false, optional = true, version = '3.0.0' }
@@ -86,6 +87,7 @@ std = [
     'pallet-sudo/std',
     'pallet-template/std',
     'pallet-deip/std',
+    'pallet-deip-proposal/std',
     'pallet-timestamp/std',
     'pallet-transaction-payment/std',
     'pallet-transaction-payment-rpc-runtime-api/std',

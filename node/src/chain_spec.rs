@@ -2,7 +2,7 @@ use sp_core::{Pair, Public, sr25519};
 use std::{str::FromStr};
 use node_template_runtime::{
 	AccountId, AuraConfig, BalancesConfig, GenesisConfig, GrandpaConfig,
-	SudoConfig, SystemConfig, WASM_BINARY, Signature, DeipConfig
+	SudoConfig, SystemConfig, WASM_BINARY, Signature, DeipConfig, DeipProposalConfig
 };
 use pallet_deip::{ DomainId, Domain };
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
@@ -170,6 +170,9 @@ fn testnet_genesis(
 			domains: domains.iter().cloned().map(|k|(k, Domain { external_id: k })).collect(),
 			domain_count: domains.len() as u32,
 		}),
+        pallet_deip_proposal: Some(DeipProposalConfig {
+            // _myfield: Default::default()
+        }),
 		pallet_aura: Some(AuraConfig {
 			authorities: initial_authorities.iter().map(|x| (x.0.clone())).collect(),
 		}),
