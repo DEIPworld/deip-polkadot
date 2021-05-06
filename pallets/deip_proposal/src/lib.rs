@@ -4,22 +4,35 @@ pub use pallet::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-    pub use frame_support::pallet_prelude::*;
     pub use frame_system::pallet_prelude::*;
+    
+    pub use frame_support::pallet_prelude::*;
+    use frame_support::Callable;
+    use frame_support::weights::{PostDispatchInfo, GetDispatchInfo};
+    
+    use frame_support::traits::UnfilteredDispatchable;
     
     use sp_std::prelude::*;
     use sp_std::collections::btree_map::BTreeMap;
     use sp_std::marker::PhantomData;
+    use sp_std::fmt::Debug;
     
-    use frame_support::Callable;
-    
+    use sp_runtime::traits::Dispatchable;
+    use frame_system::RawOrigin;
+
     #[pallet::config]
     pub trait Config: frame_system::Config {
         type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
+        type Call: Parameter +
+             Dispatchable<Origin = Self::Origin, PostInfo = PostDispatchInfo> +
+             GetDispatchInfo +
+             From<frame_system::pallet::Call<Self>> +
+             UnfilteredDispatchable<Origin = Self::Origin> +
+             frame_support::dispatch::Codec;
     }
     
     #[pallet::pallet]
-    #[pallet::generate_store(pub trait Store)]
+    #[pallet::generate_store(pub(super) trait Store)]
     pub struct Pallet<T>(_);
     
     #[pallet::hooks]
@@ -47,13 +60,20 @@ pub mod pallet {
         #[pallet::weight(10_000)]
         fn propose(
             origin: OriginFor<T>,
-            batch: Vec<BatchItemX<T::AccountId, Vec<u8>>>,
+            batch: Vec<BatchItemOf<T>>,
         )
             -> DispatchResultWithPostInfo
         {
             let _ = origin;
-            let _ = batch;
-            unimplemented!();
+            frame_support::debug::RuntimeLogger::init();
+            frame_support::debug::debug!("{:?}", batch);
+            for x in batch {
+                let BatchItemOf::<T> { account, extrinsic } = x;
+                frame_support::debug::debug!("{:?}", &account);
+                frame_support::debug::debug!("{:?}", &extrinsic);
+                extrinsic.dispatch(RawOrigin::Signed(account).into())?;
+            }
+            Ok(Some(0).into())
         }
         
         #[pallet::weight(10_000)]
@@ -62,7 +82,7 @@ pub mod pallet {
         )
             -> DispatchResultWithPostInfo
         {
-            let _ = origin;
+            let who = ensure_signed(origin)?;
             unimplemented!();
         }
         
@@ -80,11 +100,29 @@ pub mod pallet {
         }
     }
     
-    /// Logic:
+    // ==== Storage ====:
+    
+    // #[pallet::storage]
+    // pub(super) type ProposalStorage<T> = StorageMap<_, Blake2_128Concat, u32, DeipProposal<T>, OptionQuery>;
+    // 
+    
+    #[pallet::storage]
+    #[pallet::getter(fn pending_proposals)]
+    pub(super) type PendingProposals<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, PendingProposalsMap, OptionQuery>;
+    
+    // ==== Logic ====:
 
+    pub type ProposalId = Vec<u8>;
+    pub type PendingProposalsMap = BTreeMap<ProposalId, ()>;
+    
+    pub type BatchItemOf<T: Config> = BatchItemX<
+        <T as frame_system::Config>::AccountId,
+        <T as Config>::Call
+    >;
+    
     pub struct DeipProposalBuilder<T: Config> {
         _m: (PhantomData<T>, ),
-        batch: Vec<BatchItemX<T::AccountId, Vec<u8>>>,
+        batch: Vec<BatchItemOf<T>>,
     }
 
     impl<T: Config> DeipProposalBuilder<T> {
@@ -96,18 +134,58 @@ pub mod pallet {
 
     pub struct DeipProposal<T: Config> {
         _m: (PhantomData<T>, ),
+        batch: Vec<BatchItemOf<T>>,
+        state: ProposalState,
+        author: T::AccountId
+    }
+    
+    #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
+    pub enum ProposalState {
+        Pending,
+        Rejected,
+        Done
     }
 
     impl<T: Config> DeipProposal<T> {
-        pub fn builder(batch: Vec<BatchItemX<T::AccountId, Vec<u8>>>) -> DeipProposalBuilder<T> {
+        pub fn builder(batch: Vec<BatchItemOf<T>>) -> DeipProposalBuilder<T> {
             DeipProposalBuilder { _m: Default::default(), batch }
         }
+        
+        pub fn new(batch: Vec<BatchItemOf<T>>, author: T::AccountId) -> Self {
+            Self {
+                _m: (Default::default()),
+                batch,
+                state: ProposalState::Pending,
+                author
+            }
+        }
+        
+        pub fn decide<'a>(&mut self, member: T::AccountId) -> Result<MemberDecision<'a, T>, &'static str>{
+            let item = self.batch.iter_mut()
+                .find(|x| x.account == member)
+                .ok_or("Not a member")?;
+            Ok(MemberDecision(item))
+        }
     }
-
+    
+    pub struct MemberDecision<'a, T: Config>(&'a mut BatchItemOf<T>);
+    impl<'a, T: Config> MemberDecision<'a, T> {
+        fn approve(mut self) {}
+        fn decline(mut self) {}
+    }
+    
     #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
-    pub struct BatchItemX<AccountId, Extrinsic> {
-        account: AccountId,
+    pub struct BatchItemX<Account, Extrinsic> {
+        account: Account,
         extrinsic: Extrinsic,
+        state: MemberApproveState
+    }
+    
+    #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
+    pub enum MemberApproveState {
+        Pending,
+        Approve,
+        Decline
     }
     // 
     // pub struct BatchItem<AccountId> where Self: BatchItemT {

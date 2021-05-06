@@ -90,5 +90,9 @@
       "content": "Hash",
       "authors": "Vec<AccountId>",
       "references": "Option<Vec<ProjectContentId>>"
+    },
+    "BatchItemX": {
+      "account": "AccountId",
+      "extrinsic": "Call"
     }
-  }
+}
