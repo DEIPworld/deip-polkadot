@@ -1,5 +1,31 @@
 {
     "DomainId": "H160",
+    "ProposalBatchItemOf": {
+      "account": "AccountId",
+      "extrinsic": "Call"
+    },
+    "ProposalId": "[u8; 32]",
+    "PendingProposalsMap": "BTreeMap<ProposalId,AccountId>",
+    "DeipProposal": {
+      "batch": "Vec<ProposalBatchItemOf>",
+      "decisions": "Vec<ProposalMemberDecisionState>",
+      "state": "ProposalState",
+      "author": "AccountId"
+    },
+    "ProposalState": {
+      "_enum": [
+        "Pending",
+        "Rejected",
+        "Done"
+      ]
+    },
+    "ProposalMemberDecisionState": {
+      "_enum": [
+        "Pending",
+        "Approve",
+        "Decline"
+      ]
+    },
     "ProjectId": "H160",
     "ReviewId": "H160",
     "ProjectContentId": "H160",
@@ -90,9 +116,5 @@
       "content": "Hash",
       "authors": "Vec<AccountId>",
       "references": "Option<Vec<ProjectContentId>>"
-    },
-    "BatchItemX": {
-      "account": "AccountId",
-      "extrinsic": "Call"
     }
 }

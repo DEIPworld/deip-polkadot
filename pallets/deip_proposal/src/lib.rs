@@ -4,12 +4,10 @@ pub use pallet::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-    pub use frame_system::pallet_prelude::*;
-    use frame_support::storage::StorageMap as _;
-    use frame_support::storage::StorageDoubleMap as _;
-    use frame_support::storage::types::QueryKindTrait as _;
+    use frame_system::pallet_prelude::*;
+    use frame_system::RawOrigin;
     
-    pub use frame_support::pallet_prelude::*;
+    use frame_support::pallet_prelude::*;
     use frame_support::{Callable, Hashable};
     use frame_support::weights::{PostDispatchInfo, GetDispatchInfo};
     
@@ -21,7 +19,6 @@ pub mod pallet {
     use sp_std::fmt::Debug;
     
     use sp_runtime::traits::Dispatchable;
-    use frame_system::RawOrigin;
 
     #[pallet::config]
     pub trait Config: frame_system::Config {
@@ -64,7 +61,7 @@ pub mod pallet {
         #[frame_support::transactional]
         fn propose(
             origin: OriginFor<T>,
-            batch: Vec<BatchItemOf<T>>,
+            batch: Vec<ProposalBatchItemOf<T>>,
         )
             -> DispatchResultWithPostInfo
         {
@@ -80,7 +77,7 @@ pub mod pallet {
                 .map(|m| &m.account)
             {
                 PendingProposals::<T>::mutate(member, |x| {
-                    x.insert(proposal_id, ());
+                    x.insert(proposal_id, author.clone());
                 });
             }
             
@@ -138,28 +135,29 @@ pub mod pallet {
     pub(super) type PendingProposals<T: Config> = StorageMap<_,
         Blake2_128Concat,
         T::AccountId,
-        PendingProposalsMap,
+        PendingProposalsMap<T>,
         ValueQuery,
         PendingProposalsMapDefault<T>
     >;
     
     #[pallet::type_value]
-	pub(super) fn PendingProposalsMapDefault<T: Config>() -> PendingProposalsMap { Default::default() }
+    pub(super) fn PendingProposalsMapDefault<T: Config>() -> PendingProposalsMap<T> { Default::default() }
     
     // ==== Logic ====:
 
     pub type ProposalId = [u8; 32];
-    pub type PendingProposalsMap = BTreeMap<ProposalId, ()>;
+    #[allow(type_alias_bounds)]
+    pub type PendingProposalsMap<T: Config> = BTreeMap<ProposalId, T::AccountId>;
     
     #[allow(type_alias_bounds)]
-    pub type BatchItemOf<T: Config> = BatchItemX<
+    pub type ProposalBatchItemOf<T: Config> = BatchItemX<
         <T as frame_system::Config>::AccountId,
         <T as Config>::Call
     >;
     
     pub struct DeipProposalBuilder<T: Config> {
         _m: (PhantomData<T>, ),
-        batch: Vec<BatchItemOf<T>>,
+        batch: Vec<ProposalBatchItemOf<T>>,
     }
 
     impl<T: Config> DeipProposalBuilder<T> {
@@ -172,8 +170,8 @@ pub mod pallet {
     #[derive(Debug, Encode, Decode)]
     pub struct DeipProposal<T: Config> {
         _m: (PhantomData<T>, ),
-        batch: Vec<BatchItemOf<T>>,
-        decisions: Vec<MemberDecisionState>,
+        batch: Vec<ProposalBatchItemOf<T>>,
+        decisions: Vec<ProposalMemberDecisionState>,
         state: ProposalState,
         author: T::AccountId
     }
@@ -195,13 +193,13 @@ pub mod pallet {
             proposal_id_source.twox_256()
         }
         
-        pub fn builder(batch: Vec<BatchItemOf<T>>) -> DeipProposalBuilder<T> {
+        pub fn builder(batch: Vec<ProposalBatchItemOf<T>>) -> DeipProposalBuilder<T> {
             DeipProposalBuilder { _m: Default::default(), batch }
         }
         
-        pub fn new(batch: Vec<BatchItemOf<T>>, author: T::AccountId) -> Self {
+        pub fn new(batch: Vec<ProposalBatchItemOf<T>>, author: T::AccountId) -> Self {
             let mut decisions = Vec::with_capacity(batch.len());
-            decisions.extend(sp_std::iter::repeat(MemberDecisionState::Pending).take(batch.len()));
+            decisions.extend(sp_std::iter::repeat(ProposalMemberDecisionState::Pending).take(batch.len()));
             Self {
                 _m: (Default::default()),
                 batch,
@@ -220,23 +218,23 @@ pub mod pallet {
         }
     }
     
-    pub struct MemberDecision<'a, T: Config>(&'a mut BatchItemOf<T>, &'a mut MemberDecisionState);
+    pub struct MemberDecision<'a, T: Config>(&'a mut ProposalBatchItemOf<T>, &'a mut ProposalMemberDecisionState);
     impl<'a, T: Config> MemberDecision<'a, T> {
-        fn approve(mut self) -> Result<MemberDecisionState, MemberDecisionState>
+        fn approve(mut self) -> Result<ProposalMemberDecisionState, ProposalMemberDecisionState>
         {
             match self.1 {
-                MemberDecisionState::Pending => {
-                    *self.1 = MemberDecisionState::Approve;
+                ProposalMemberDecisionState::Pending => {
+                    *self.1 = ProposalMemberDecisionState::Approve;
                     Ok(*self.1)
                 },
                 _ => Err(*self.1)
             }
         }
-        fn decline(mut self) -> Result<MemberDecisionState, MemberDecisionState>
+        fn decline(mut self) -> Result<ProposalMemberDecisionState, ProposalMemberDecisionState>
         {
             match self.1 {
-                MemberDecisionState::Pending => {
-                    *self.1 = MemberDecisionState::Decline;
+                ProposalMemberDecisionState::Pending => {
+                    *self.1 = ProposalMemberDecisionState::Decline;
                     Ok(*self.1)
                 },
                 _ => Err(*self.1)
@@ -251,7 +249,7 @@ pub mod pallet {
     }
     
     #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode)]
-    pub enum MemberDecisionState {
+    pub enum ProposalMemberDecisionState {
         Pending,
         Approve,
         Decline
