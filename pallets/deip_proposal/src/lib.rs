@@ -57,7 +57,7 @@ pub mod pallet {
     
     #[pallet::call]
     impl<T: Config> Pallet<T> {
-        #[pallet::weight(10_000)]
+        #[pallet::weight(10)]
         #[frame_support::transactional]
         fn propose(
             origin: OriginFor<T>,
@@ -80,31 +80,36 @@ pub mod pallet {
                     x.insert(proposal_id, author.clone());
                 });
             }
-            
             ProposalStorage::<T>::insert(author, proposal_id, proposal);
-            
-            // frame_support::debug::RuntimeLogger::init();
-            // frame_support::debug::debug!("{:?}", batch);
-            // for x in batch {
-            //     let BatchItemOf::<T> { account, extrinsic } = x;
-            //     frame_support::debug::debug!("{:?}", &account);
-            //     frame_support::debug::debug!("{:?}", &extrinsic);
-            //     extrinsic.dispatch(RawOrigin::Signed(account).into())?;
-            // }
             Ok(Some(0).into())
         }
         
-        #[pallet::weight(10_000)]
-        fn approve(
+        #[pallet::weight(10)]
+        #[frame_support::transactional]
+        fn decide(
             origin: OriginFor<T>,
+            proposal_id: ProposalId,
+            decision: ProposalMemberDecision,
         )
             -> DispatchResultWithPostInfo
         {
-            let who = ensure_signed(origin)?;
-            unimplemented!();
+            let member = ensure_signed(origin)?;
+            let pending = PendingProposals::<T>::get(&member);
+            let author = pending.get(&proposal_id).ok_or("not found")?;
+            let mut proposal = ProposalStorage::<T>::get(author, &proposal_id).ok_or("not_found")?;
+            proposal.decide(&member, decision, |prop| {
+                frame_support::debug::RuntimeLogger::init();
+                for x in prop.batch.iter() {
+                    let ProposalBatchItemOf::<T> { account, call } = x;
+                    frame_support::debug::debug!("{:?}; {:?}", &account, &call);
+                    call.dispatch(RawOrigin::Signed(account).into())?;
+                }
+                None
+            })?;
+            Ok(Some(0).into())
         }
         
-        #[pallet::weight(10_000)]
+        #[pallet::weight(10)]
         fn explore(
             origin: OriginFor<T>,
         )
@@ -209,75 +214,79 @@ pub mod pallet {
             }
         }
         
-        pub fn decide<'a>(&'a mut self, member: T::AccountId) -> Result<MemberDecision<'a, T>, &'static str>{
-            let item = self.batch.iter_mut()
+        #[frame_support::require_transactional]
+        pub fn decide<'a, R, F: FnMut(&'a mut Self) -> Option<R>>(
+            &'a mut self,
+            member: &T::AccountId,
+            decision: ProposalMemberDecision,
+            on_all_approved: F
+        )
+            -> Result<Option<R>, &'static str>
+        {
+            let (item, state) = self.batch.iter_mut()
                 .zip(self.decisions.iter_mut())
-                .find(|x| x.0.account == member)
-                .ok_or("Not a member")?;
-            Ok(MemberDecision(item.0, item.1))
-        }
-    }
-    
-    pub struct MemberDecision<'a, T: Config>(&'a mut ProposalBatchItemOf<T>, &'a mut ProposalMemberDecisionState);
-    impl<'a, T: Config> MemberDecision<'a, T> {
-        fn approve(mut self) -> Result<ProposalMemberDecisionState, ProposalMemberDecisionState>
-        {
-            match self.1 {
-                ProposalMemberDecisionState::Pending => {
-                    *self.1 = ProposalMemberDecisionState::Approve;
-                    Ok(*self.1)
-                },
-                _ => Err(*self.1)
+                .find(|x| &x.0.account == member)
+                .ok_or("not a member")?;
+            if !matches!(self.state, ProposalState::Pending) {
+                return Err("can't decide on resolved proposal")
             }
-        }
-        fn decline(mut self) -> Result<ProposalMemberDecisionState, ProposalMemberDecisionState>
-        {
-            match self.1 {
-                ProposalMemberDecisionState::Pending => {
-                    *self.1 = ProposalMemberDecisionState::Decline;
-                    Ok(*self.1)
+            let state = state.decide(decision).or(Err("member already made decision"))?;
+            match state {
+                ProposalMemberDecisionState::Declined => {
+                    self.state = ProposalState::Rejected;
+                    Ok(None)
                 },
-                _ => Err(*self.1)
+                ProposalMemberDecisionState::Approved => {
+                    let all_approved = self.decisions.iter()
+                        .all(|x: &ProposalMemberDecisionState| matches!(x, ProposalMemberDecisionState::Approved));
+                    if all_approved {
+                        self.state = ProposalState::Done;
+                        Ok(on_all_approved(self))
+                    } else {
+                        Ok(None)
+                    }
+                },
+                _ => Ok(None),
             }
         }
     }
     
     #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
-    pub struct BatchItemX<Account, Extrinsic> {
+    pub struct BatchItemX<Account, CallT> {
         account: Account,
-        extrinsic: Extrinsic,
+        call: CallT,
     }
     
     #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode)]
     pub enum ProposalMemberDecisionState {
         Pending,
+        Approved,
+        Declined
+    }
+    impl ProposalMemberDecisionState {
+        fn decide(&mut self, decision: ProposalMemberDecision) -> Result<Self, Self> {
+            match self {
+                Self::Pending => {
+                    *self = match decision {
+                        ProposalMemberDecision::Approve => Self::Approved,
+                        ProposalMemberDecision::Decline => Self::Declined,
+                    };
+                    Ok(*self)
+                },
+                other => Err(*other),
+            }
+        }
+    }
+    
+    #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode)]
+    pub enum ProposalMemberDecision {
         Approve,
         Decline
     }
-    // 
-    // pub struct BatchItem<AccountId> where Self: BatchItemT {
-    //     account: AccountId,
-    //     extrinsic: <Self as BatchItemT>::Extrinsic
-    // }
-    // pub trait BatchItemT {
-    //     type Extrinsic;
-    // }
-    // impl<T: Config> BatchItemT for BatchItem<T::AccountId> {
-    //     type Extrinsic = ();
-    // }
-    // 
-    // pub struct Batch<T: Config, Item: BatchItemT> {
-    //     items: Vec<BatchItem<T::AccountId>>
-    // }
-    // 
-    // pub trait BatchT<Item: BatchItemT> {
-    //     fn add_item(&mut self, item: Item);
-    // }
-    // 
-    // impl<T: Config, Item: BatchItemT> BatchT<Item> for Batch<T, Item> {
-    //     fn add_item(&mut self, item: Item) {
-    //         self.items.push(item);
-    //     }
-    // }
-
+    
+    pub enum ProposalStatus {
+        Pending,
+        ReadyToExec,
+        Done
+    }
 }
