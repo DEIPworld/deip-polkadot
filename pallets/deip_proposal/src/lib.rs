@@ -38,6 +38,18 @@ pub mod pallet {
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {}
     
+    #[pallet::error]
+    pub enum Error<T> {
+        /// Proposal not found
+        NotFound,
+        /// Current origin is not a member of Proposal
+        NotAMember,
+        /// Proposal already resolved
+        AlreadyResolved,
+        /// Member already made decision on Proposal
+        AlreadyDecide,
+    }
+    
     #[pallet::event]
     #[pallet::metadata(u32 = "SpecialU32")]
     pub enum Event<T: Config> {
@@ -95,17 +107,20 @@ pub mod pallet {
         {
             let member = ensure_signed(origin)?;
             let pending = PendingProposals::<T>::get(&member);
-            let author = pending.get(&proposal_id).ok_or("not found")?;
-            let mut proposal = ProposalStorage::<T>::get(author, &proposal_id).ok_or("not_found")?;
-            proposal.decide(&member, decision, |prop| {
+            let author = pending.get(&proposal_id).ok_or(Error::<T>::NotFound)?;
+            let mut proposal = ProposalStorage::<T>::get(author, &proposal_id).ok_or(Error::<T>::NotFound)?;
+            let maybe_batch_exec_result: Option<DispatchResultWithPostInfo> = proposal.decide(&member, decision, |batch| {
                 frame_support::debug::RuntimeLogger::init();
-                for x in prop.batch.iter() {
+                for x in batch {
                     let ProposalBatchItemOf::<T> { account, call } = x;
                     frame_support::debug::debug!("{:?}; {:?}", &account, &call);
-                    call.dispatch(RawOrigin::Signed(account).into())?;
+                    call.dispatch(RawOrigin::Signed(account.clone()).into())?;
                 }
-                None
+                Ok(Some(0).into())
             })?;
+            if let Some(batch_exec_result) = maybe_batch_exec_result {
+                let _batch_exec_ok = batch_exec_result?;
+            }
             Ok(Some(0).into())
         }
         
@@ -160,12 +175,17 @@ pub mod pallet {
         <T as Config>::Call
     >;
     
+    #[allow(type_alias_bounds)]
+    pub type ProposalBatch<T: Config> = Vec<ProposalBatchItemOf<T>>;
+    
     pub struct DeipProposalBuilder<T: Config> {
         _m: (PhantomData<T>, ),
+        #[allow(dead_code)]
         batch: Vec<ProposalBatchItemOf<T>>,
     }
 
     impl<T: Config> DeipProposalBuilder<T> {
+        #[allow(dead_code)]
         fn map_callable<'a, C: Callable<T> + 'a>(&self, c: &'a BTreeMap<Vec<u8>, C>) -> Vec<&'a C> {
             let _ = c;
             unimplemented!();
@@ -175,7 +195,7 @@ pub mod pallet {
     #[derive(Debug, Encode, Decode)]
     pub struct DeipProposal<T: Config> {
         _m: (PhantomData<T>, ),
-        batch: Vec<ProposalBatchItemOf<T>>,
+        batch: ProposalBatch<T>,
         decisions: Vec<ProposalMemberDecisionState>,
         state: ProposalState,
         author: T::AccountId
@@ -185,7 +205,8 @@ pub mod pallet {
     pub enum ProposalState {
         Pending,
         Rejected,
-        Done
+        Done,
+        Fail
     }
     
     impl<T: Config> DeipProposal<T> {
@@ -215,39 +236,53 @@ pub mod pallet {
         }
         
         #[frame_support::require_transactional]
-        pub fn decide<'a, R, F: FnMut(&'a mut Self) -> Option<R>>(
-            &'a mut self,
+        pub fn decide<R, E, F>(
+            &mut self,
             member: &T::AccountId,
             decision: ProposalMemberDecision,
-            on_all_approved: F
+            batch_exec: F
         )
-            -> Result<Option<R>, &'static str>
+            -> Result<Option<Result<R, E>>, Error<T>>
+            where
+                F: FnOnce(ProposalBatch<T>) -> Result<R, E> 
         {
-            let (item, state) = self.batch.iter_mut()
+            let member_decision_state = self.batch.iter()
                 .zip(self.decisions.iter_mut())
                 .find(|x| &x.0.account == member)
-                .ok_or("not a member")?;
-            if !matches!(self.state, ProposalState::Pending) {
-                return Err("can't decide on resolved proposal")
-            }
-            let state = state.decide(decision).or(Err("member already made decision"))?;
-            match state {
-                ProposalMemberDecisionState::Declined => {
+                .map(|(_, x)| x)
+                .ok_or(Error::<T>::NotAMember)?;
+            
+            ensure!(matches!(self.state, ProposalState::Pending), Error::<T>::AlreadyResolved);
+            
+            match member_decision_state.decide(decision) {
+                Err(_) => Err(Error::<T>::AlreadyDecide)?,
+                Ok(ProposalMemberDecisionState::Declined) => {
                     self.state = ProposalState::Rejected;
                     Ok(None)
                 },
-                ProposalMemberDecisionState::Approved => {
-                    let all_approved = self.decisions.iter()
-                        .all(|x: &ProposalMemberDecisionState| matches!(x, ProposalMemberDecisionState::Approved));
-                    if all_approved {
-                        self.state = ProposalState::Done;
-                        Ok(on_all_approved(self))
+               Ok(ProposalMemberDecisionState::Approved) => {
+                    if self.ready_to_exec() {
+                        let batch_exec_result = batch_exec(self.batch.clone());
+                        self.state = if batch_exec_result.is_ok() {
+                            ProposalState::Done
+                        } else {
+                            ProposalState::Fail
+                        };
+                        Ok(Some(batch_exec_result))
                     } else {
                         Ok(None)
                     }
                 },
                 _ => Ok(None),
             }
+        }
+        
+        fn ready_to_exec(&self) -> bool {
+            let approved = self.decisions.iter()
+                .all(|x: &ProposalMemberDecisionState| {
+                    matches!(x, ProposalMemberDecisionState::Approved)
+                });
+            approved && matches!(self.state, ProposalState::Pending)
         }
     }
     
