@@ -42,6 +42,8 @@ pub mod pallet {
     pub enum Error<T> {
         /// Proposal not found
         NotFound,
+        /// Proposal already exist
+        AlreadyExist,
         /// Current origin is not a member of Proposal
         NotAMember,
         /// Proposal already resolved
@@ -52,8 +54,13 @@ pub mod pallet {
     
     #[pallet::event]
     #[pallet::metadata(u32 = "SpecialU32")]
+    #[pallet::generate_deposit(fn deposit_event)]
     pub enum Event<T: Config> {
-        Proposed(u32, T::AccountId),
+        Proposed(T::AccountId),
+        Rejected(T::AccountId),
+        Approved(T::AccountId),
+        Done,
+        Fail
     }
     
     #[pallet::genesis_config]
@@ -83,7 +90,7 @@ pub mod pallet {
             
             let proposal_id = proposal.id();
             
-            ensure!(!ProposalStorage::<T>::contains_key(author.clone(), proposal_id), "exists");
+            ensure!(!ProposalStorage::<T>::contains_key(author.clone(), proposal_id), Error::<T>::AlreadyExist);
             
             for member in proposal.batch.iter()
                 .map(|m| &m.account)
@@ -92,7 +99,8 @@ pub mod pallet {
                     x.insert(proposal_id, author.clone());
                 });
             }
-            ProposalStorage::<T>::insert(author, proposal_id, proposal);
+            ProposalStorage::<T>::insert(author.clone(), proposal_id, proposal);
+            Self::deposit_event(Event::<T>::Proposed(author));
             Ok(Some(0).into())
         }
         
@@ -109,15 +117,17 @@ pub mod pallet {
             let pending = PendingProposals::<T>::get(&member);
             let author = pending.get(&proposal_id).ok_or(Error::<T>::NotFound)?;
             let mut proposal = ProposalStorage::<T>::get(author, &proposal_id).ok_or(Error::<T>::NotFound)?;
-            let maybe_batch_exec_result: Option<DispatchResultWithPostInfo> = proposal.decide(&member, decision, |batch| {
+            let result: (Transaction<T>, Option<DispatchResultWithPostInfo>) = proposal.decide(&member, decision, |batch| {
                 frame_support::debug::RuntimeLogger::init();
                 for x in batch {
                     let ProposalBatchItemOf::<T> { account, call } = x;
                     frame_support::debug::debug!("{:?}; {:?}", &account, &call);
-                    call.dispatch(RawOrigin::Signed(account.clone()).into())?;
+                    call.dispatch(RawOrigin::Signed(account).into())?;
                 }
                 Ok(Some(0).into())
             })?;
+            let (transaction, maybe_batch_exec_result) = result;
+            transaction.commit();
             if let Some(batch_exec_result) = maybe_batch_exec_result {
                 let _batch_exec_ok = batch_exec_result?;
             }
@@ -209,6 +219,28 @@ pub mod pallet {
         Fail
     }
     
+    enum TransactionOps<T: Config> {
+        Persist(DeipProposal<T>),
+        PutEvent(Event<T>)
+    }
+    pub struct Transaction<T: Config>(Vec<TransactionOps<T>>);
+    impl<T: Config> Transaction<T> {
+        fn new() -> Self { Self(Vec::new()) }
+        fn push_op(&mut self, op: TransactionOps<T>) { self.0.push(op); }
+        fn commit(self) {
+            for op in self.0 {
+                match op {
+                    TransactionOps::Persist(proposal) => {
+                       <ProposalStorage<T>>::insert(proposal.author.clone(), proposal.id(), proposal); 
+                    },
+                    TransactionOps::PutEvent(event) => {
+                        <Pallet<T>>::deposit_event(event);
+                    }
+                }
+            }
+        }
+    }
+    
     impl<T: Config> DeipProposal<T> {
         fn id(&self) -> ProposalId {
             let author_hash = self.author.twox_256();
@@ -236,16 +268,18 @@ pub mod pallet {
         }
         
         #[frame_support::require_transactional]
-        pub fn decide<R, E, F>(
-            &mut self,
+        pub fn decide<R, E, BatchExec>(
+            mut self,
             member: &T::AccountId,
             decision: ProposalMemberDecision,
-            batch_exec: F
+            batch_exec: BatchExec,
         )
-            -> Result<Option<Result<R, E>>, Error<T>>
+            -> Result<(Transaction<T>, Option<BatchExec::Output>), Error<T>>
             where
-                F: FnOnce(ProposalBatch<T>) -> Result<R, E> 
+                BatchExec: FnOnce(ProposalBatch<T>) -> Result<R, E>
         {
+            let mut transaction = <Transaction<T>>::new();
+            
             let member_decision_state = self.batch.iter()
                 .zip(self.decisions.iter_mut())
                 .find(|x| &x.0.account == member)
@@ -254,27 +288,32 @@ pub mod pallet {
             
             ensure!(matches!(self.state, ProposalState::Pending), Error::<T>::AlreadyResolved);
             
-            match member_decision_state.decide(decision) {
-                Err(_) => Err(Error::<T>::AlreadyDecide)?,
+            let batch_exec_result = match member_decision_state.decide(decision) {
+                Err(_) | Ok(ProposalMemberDecisionState::Pending) => Err(Error::<T>::AlreadyDecide)?,
                 Ok(ProposalMemberDecisionState::Declined) => {
                     self.state = ProposalState::Rejected;
-                    Ok(None)
+                    transaction.push_op(TransactionOps::PutEvent(Event::<T>::Rejected(member.clone())));
+                    None
                 },
-               Ok(ProposalMemberDecisionState::Approved) => {
+                Ok(ProposalMemberDecisionState::Approved) => {
+                    transaction.push_op(TransactionOps::PutEvent(Event::<T>::Approved(member.clone())));
                     if self.ready_to_exec() {
                         let batch_exec_result = batch_exec(self.batch.clone());
                         self.state = if batch_exec_result.is_ok() {
+                            transaction.push_op(TransactionOps::PutEvent(Event::<T>::Done));
                             ProposalState::Done
                         } else {
+                            transaction.push_op(TransactionOps::PutEvent(Event::<T>::Fail));
                             ProposalState::Fail
                         };
-                        Ok(Some(batch_exec_result))
-                    } else {
-                        Ok(None)
-                    }
+                        Some(batch_exec_result)
+                    } else { None }
                 },
-                _ => Ok(None),
-            }
+            };
+            
+            transaction.push_op(TransactionOps::Persist(self));
+            
+            Ok((transaction, batch_exec_result))
         }
         
         fn ready_to_exec(&self) -> bool {
