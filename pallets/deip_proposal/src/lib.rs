@@ -103,9 +103,8 @@ pub mod pallet {
             Self::deposit_event(Event::<T>::Proposed(author));
             Ok(Some(0).into())
         }
-        
+
         #[pallet::weight(10)]
-        #[frame_support::transactional]
         fn decide(
             origin: OriginFor<T>,
             proposal_id: ProposalId,
@@ -116,16 +115,12 @@ pub mod pallet {
             let member = ensure_signed(origin)?;
             let pending = PendingProposals::<T>::get(&member);
             let author = pending.get(&proposal_id).ok_or(Error::<T>::NotFound)?;
-            let mut proposal = ProposalStorage::<T>::get(author, &proposal_id).ok_or(Error::<T>::NotFound)?;
-            let result: (Transaction<T>, Option<DispatchResultWithPostInfo>) = proposal.decide(&member, decision, |batch| {
-                frame_support::debug::RuntimeLogger::init();
-                for x in batch {
-                    let ProposalBatchItemOf::<T> { account, call } = x;
-                    frame_support::debug::debug!("{:?}; {:?}", &account, &call);
-                    call.dispatch(RawOrigin::Signed(account).into())?;
-                }
-                Ok(Some(0).into())
-            })?;
+            let proposal = ProposalStorage::<T>::get(author, &proposal_id).ok_or(Error::<T>::NotFound)?;
+            let result: (Transaction<T>, Option<DispatchResultWithPostInfo>) = proposal.decide(
+                &member,
+                decision,
+                Self::exec_batch
+            )?;
             let (transaction, maybe_batch_exec_result) = result;
             transaction.commit();
             if let Some(batch_exec_result) = maybe_batch_exec_result {
@@ -145,6 +140,20 @@ pub mod pallet {
             frame_support::debug::debug!("call_functions: {:?}", <Pallet<T>>::call_functions());
             // unimplemented!();
             Result::Ok(frame_support::dispatch::PostDispatchInfo { actual_weight: None, pays_fee: Default::default() })
+        }
+    }
+
+    impl<T: Config> Pallet<T> {
+        #[frame_support::transactional]
+        fn exec_batch(batch: ProposalBatch<T>) -> DispatchResultWithPostInfo
+        {
+            frame_support::debug::RuntimeLogger::init();
+            for x in batch {
+                let ProposalBatchItemOf::<T> { account, call } = x;
+                frame_support::debug::debug!("{:?}; {:?}", &account, &call);
+                call.dispatch(RawOrigin::Signed(account).into())?;
+            }
+            Ok(Some(0).into())
         }
     }
     
@@ -267,7 +276,6 @@ pub mod pallet {
             }
         }
         
-        #[frame_support::require_transactional]
         pub fn decide<R, E, BatchExec>(
             mut self,
             member: &T::AccountId,
@@ -356,11 +364,5 @@ pub mod pallet {
     pub enum ProposalMemberDecision {
         Approve,
         Decline
-    }
-    
-    pub enum ProposalStatus {
-        Pending,
-        ReadyToExec,
-        Done
     }
 }
