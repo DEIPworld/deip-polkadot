@@ -14,14 +14,16 @@ pub mod pallet {
     use frame_support::traits::UnfilteredDispatchable;
     
     use sp_std::prelude::*;
-    use sp_std::collections::btree_map::BTreeMap;
+    use sp_std::collections::{btree_map::BTreeMap, vec_deque::VecDeque};
     use sp_std::marker::PhantomData;
     use sp_std::fmt::Debug;
     
     use sp_runtime::traits::Dispatchable;
+    
+    use pallet_multisig;
 
     #[pallet::config]
-    pub trait Config: frame_system::Config {
+    pub trait Config: frame_system::Config + pallet_multisig::Config {
         type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
         type Call: Parameter +
              Dispatchable<Origin = Self::Origin, PostInfo = PostDispatchInfo> +
@@ -56,7 +58,7 @@ pub mod pallet {
     #[pallet::metadata(u32 = "SpecialU32")]
     #[pallet::generate_deposit(fn deposit_event)]
     pub enum Event<T: Config> {
-        Proposed(T::AccountId),
+        Proposed(T::AccountId, ProposalId),
         Rejected(T::AccountId),
         Approved(T::AccountId),
         Done,
@@ -77,7 +79,6 @@ pub mod pallet {
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::weight(10)]
-        #[frame_support::transactional]
         fn propose(
             origin: OriginFor<T>,
             batch: Vec<ProposalBatchItemOf<T>>,
@@ -86,21 +87,26 @@ pub mod pallet {
         {
             let author = ensure_signed(origin)?;
             
-            let proposal = DeipProposal::<T>::new(batch, author.clone());
+            let proposal = DeipProposal::<T>::new(
+                batch,
+                author.clone(),
+                <DeipProposal<T>>::timepoint
+            );
             
-            let proposal_id = proposal.id();
+            let members = proposal.batch.iter()
+                .map(|m| m.account.clone())
+                .collect();
+
+            StorageOpsTransaction::<T>::new()
+                .push_op(StorageOps::AddPendingProposal {
+                    members,
+                    proposal_id: proposal.id,
+                    author: author.clone(),
+                })
+                .push_op(StorageOps::DepositEvent(Event::<T>::Proposed(author, proposal.id)))
+                .push_op(StorageOps::PersistProposal(proposal))
+                .commit();
             
-            ensure!(!ProposalStorage::<T>::contains_key(author.clone(), proposal_id), Error::<T>::AlreadyExist);
-            
-            for member in proposal.batch.iter()
-                .map(|m| &m.account)
-            {
-                PendingProposals::<T>::mutate(member, |x| {
-                    x.insert(proposal_id, author.clone());
-                });
-            }
-            ProposalStorage::<T>::insert(author.clone(), proposal_id, proposal);
-            Self::deposit_event(Event::<T>::Proposed(author));
             Ok(Some(0).into())
         }
 
@@ -116,13 +122,12 @@ pub mod pallet {
             let pending = PendingProposals::<T>::get(&member);
             let author = pending.get(&proposal_id).ok_or(Error::<T>::NotFound)?;
             let proposal = ProposalStorage::<T>::get(author, &proposal_id).ok_or(Error::<T>::NotFound)?;
-            let result: (Transaction<T>, Option<DispatchResultWithPostInfo>) = proposal.decide(
+            let result: (StorageOpsTransaction<T>, Option<DispatchResultWithPostInfo>) = proposal.decide(
                 &member,
                 decision,
                 Self::exec_batch
             )?;
-            let (transaction, maybe_batch_exec_result) = result;
-            transaction.commit();
+            let (_, maybe_batch_exec_result) = result;
             if let Some(batch_exec_result) = maybe_batch_exec_result {
                 let _batch_exec_ok = batch_exec_result?;
             }
@@ -213,7 +218,7 @@ pub mod pallet {
 
     #[derive(Debug, Encode, Decode)]
     pub struct DeipProposal<T: Config> {
-        _m: (PhantomData<T>, ),
+        id: ProposalId,
         batch: ProposalBatch<T>,
         decisions: Vec<ProposalMemberDecisionState>,
         state: ProposalState,
@@ -228,47 +233,63 @@ pub mod pallet {
         Failed(DispatchError)
     }
     
-    enum TransactionOps<T: Config> {
-        Persist(DeipProposal<T>),
-        PutEvent(Event<T>)
+    enum StorageOps<T: Config> {
+        PersistProposal(DeipProposal<T>),
+        DepositEvent(Event<T>),
+        AddPendingProposal {
+            members: Vec<T::AccountId>,
+            proposal_id: ProposalId,
+            author: T::AccountId
+        }
     }
-    pub struct Transaction<T: Config>(Vec<TransactionOps<T>>);
-    impl<T: Config> Transaction<T> {
-        fn new() -> Self { Self(Vec::new()) }
-        fn push_op(&mut self, op: TransactionOps<T>) { self.0.push(op); }
-        fn commit(self) {
-            for op in self.0 {
+    pub struct StorageOpsTransaction<T: Config>(VecDeque<StorageOps<T>>);
+    impl<T: Config> StorageOpsTransaction<T> {
+        fn new() -> Self { Self(VecDeque::new()) }
+        fn push_op(&mut self, op: StorageOps<T>) -> &mut Self { self.0.push_back(op); self }
+        fn commit(&mut self) {
+            while let Some(op) = self.0.pop_front() {
                 match op {
-                    TransactionOps::Persist(proposal) => {
-                       <ProposalStorage<T>>::insert(proposal.author.clone(), proposal.id(), proposal); 
+                    StorageOps::PersistProposal(proposal) => {
+                       <ProposalStorage<T>>::insert(proposal.author.clone(), proposal.id, proposal); 
                     },
-                    TransactionOps::PutEvent(event) => {
+                    StorageOps::DepositEvent(event) => {
                         <Pallet<T>>::deposit_event(event);
+                    },
+                    StorageOps::AddPendingProposal {
+                        members,
+                        proposal_id,
+                        author
+                    } => {
+                        for m in members {
+                            PendingProposals::<T>::mutate(m, |x| {
+                                x.insert(proposal_id, author.clone());
+                            });
+                        }
                     }
                 }
             }
         }
     }
+    impl<T: Config> Drop for StorageOpsTransaction<T> {
+        fn drop(&mut self) {
+            self.commit();
+        }
+    }
     
     impl<T: Config> DeipProposal<T> {
-        fn id(&self) -> ProposalId {
-            let author_hash = self.author.twox_256();
-            let batch_hash = self.batch.encode().twox_256();
-            let mut proposal_id_source = Vec::<u8>::with_capacity(64);
-            proposal_id_source.extend(author_hash.iter());
-            proposal_id_source.extend(batch_hash.iter());
-            proposal_id_source.twox_256()
-        }
+        fn timepoint() -> ProposalId { pallet_multisig::Module::<T>::timepoint().twox_256() }
         
-        pub fn builder(batch: Vec<ProposalBatchItemOf<T>>) -> DeipProposalBuilder<T> {
-            DeipProposalBuilder { _m: Default::default(), batch }
-        }
-        
-        fn new(batch: Vec<ProposalBatchItemOf<T>>, author: T::AccountId) -> Self {
+        fn new(
+            batch: Vec<ProposalBatchItemOf<T>>,
+            author: T::AccountId,
+            timepoint: impl FnOnce() -> ProposalId
+        )
+            -> Self
+        {
             let mut decisions = Vec::with_capacity(batch.len());
             decisions.extend(sp_std::iter::repeat(ProposalMemberDecisionState::Pending).take(batch.len()));
             Self {
-                _m: (Default::default()),
+                id: timepoint(),
                 batch,
                 decisions,
                 state: ProposalState::Pending,
@@ -282,11 +303,11 @@ pub mod pallet {
             decision: ProposalMemberDecision,
             batch_exec: BatchExec,
         )
-            -> Result<(Transaction<T>, Option<BatchExec::Output>), Error<T>>
+            -> Result<(StorageOpsTransaction<T>, Option<BatchExec::Output>), Error<T>>
             where
                 BatchExec: FnOnce(ProposalBatch<T>) -> DispatchResultWithPostInfo
         {
-            let mut transaction = <Transaction<T>>::new();
+            let mut transaction = <StorageOpsTransaction<T>>::new();
             
             let member_decision_state = self.batch.iter()
                 .zip(self.decisions.iter_mut())
@@ -300,18 +321,18 @@ pub mod pallet {
                 Err(_) | Ok(ProposalMemberDecisionState::Pending) => Err(Error::<T>::AlreadyDecide)?,
                 Ok(ProposalMemberDecisionState::Declined) => {
                     self.state = ProposalState::Rejected;
-                    transaction.push_op(TransactionOps::PutEvent(Event::<T>::Rejected(member.clone())));
+                    transaction.push_op(StorageOps::DepositEvent(Event::<T>::Rejected(member.clone())));
                     None
                 },
                 Ok(ProposalMemberDecisionState::Approved) => {
-                    transaction.push_op(TransactionOps::PutEvent(Event::<T>::Approved(member.clone())));
+                    transaction.push_op(StorageOps::DepositEvent(Event::<T>::Approved(member.clone())));
                     if self.ready_to_exec() {
                         let batch_exec_result = batch_exec(self.batch.clone());
                         self.state = if let Err(ref err) = batch_exec_result {
-                            transaction.push_op(TransactionOps::PutEvent(Event::<T>::Failed(err.error.clone())));
+                            transaction.push_op(StorageOps::DepositEvent(Event::<T>::Failed(err.error.clone())));
                             ProposalState::Failed(err.error.clone())
                         } else {
-                            transaction.push_op(TransactionOps::PutEvent(Event::<T>::Done));
+                            transaction.push_op(StorageOps::DepositEvent(Event::<T>::Done));
                             ProposalState::Done
                         };
                         Some(batch_exec_result)
@@ -319,7 +340,7 @@ pub mod pallet {
                 },
             };
             
-            transaction.push_op(TransactionOps::Persist(self));
+            transaction.push_op(StorageOps::PersistProposal(self));
             
             Ok((transaction, batch_exec_result))
         }
