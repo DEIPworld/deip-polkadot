@@ -60,7 +60,7 @@ pub mod pallet {
         Rejected(T::AccountId),
         Approved(T::AccountId),
         Done,
-        Fail
+        Failed(DispatchError)
     }
     
     #[pallet::genesis_config]
@@ -225,7 +225,7 @@ pub mod pallet {
         Pending,
         Rejected,
         Done,
-        Fail
+        Failed(DispatchError)
     }
     
     enum TransactionOps<T: Config> {
@@ -264,7 +264,7 @@ pub mod pallet {
             DeipProposalBuilder { _m: Default::default(), batch }
         }
         
-        pub fn new(batch: Vec<ProposalBatchItemOf<T>>, author: T::AccountId) -> Self {
+        fn new(batch: Vec<ProposalBatchItemOf<T>>, author: T::AccountId) -> Self {
             let mut decisions = Vec::with_capacity(batch.len());
             decisions.extend(sp_std::iter::repeat(ProposalMemberDecisionState::Pending).take(batch.len()));
             Self {
@@ -276,7 +276,7 @@ pub mod pallet {
             }
         }
         
-        pub fn decide<R, E, BatchExec>(
+        fn decide<BatchExec>(
             mut self,
             member: &T::AccountId,
             decision: ProposalMemberDecision,
@@ -284,7 +284,7 @@ pub mod pallet {
         )
             -> Result<(Transaction<T>, Option<BatchExec::Output>), Error<T>>
             where
-                BatchExec: FnOnce(ProposalBatch<T>) -> Result<R, E>
+                BatchExec: FnOnce(ProposalBatch<T>) -> DispatchResultWithPostInfo
         {
             let mut transaction = <Transaction<T>>::new();
             
@@ -307,12 +307,12 @@ pub mod pallet {
                     transaction.push_op(TransactionOps::PutEvent(Event::<T>::Approved(member.clone())));
                     if self.ready_to_exec() {
                         let batch_exec_result = batch_exec(self.batch.clone());
-                        self.state = if batch_exec_result.is_ok() {
+                        self.state = if let Err(ref err) = batch_exec_result {
+                            transaction.push_op(TransactionOps::PutEvent(Event::<T>::Failed(err.error.clone())));
+                            ProposalState::Failed(err.error.clone())
+                        } else {
                             transaction.push_op(TransactionOps::PutEvent(Event::<T>::Done));
                             ProposalState::Done
-                        } else {
-                            transaction.push_op(TransactionOps::PutEvent(Event::<T>::Fail));
-                            ProposalState::Fail
                         };
                         Some(batch_exec_result)
                     } else { None }
