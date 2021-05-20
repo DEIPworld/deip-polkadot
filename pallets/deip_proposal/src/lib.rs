@@ -15,6 +15,7 @@ pub mod pallet {
     
     use sp_std::prelude::*;
     use sp_std::collections::{btree_map::BTreeMap};
+    use sp_std::iter::FromIterator;
     // use sp_std::marker::PhantomData;
     use sp_std::fmt::Debug;
     
@@ -211,7 +212,7 @@ pub mod pallet {
     pub struct DeipProposal<T: Config> {
         id: ProposalId,
         batch: ProposalBatch<T>,
-        decisions: Vec<ProposalMemberDecisionState>,
+        decisions: BTreeMap<T::AccountId, ProposalMemberDecisionState>,
         state: ProposalState,
         author: T::AccountId
     }
@@ -242,6 +243,7 @@ pub mod pallet {
                 author: T::AccountId,
             },
         }
+        
         pub struct StorageOpsQueue<T>(VecDeque<T>);
         impl<T> StorageOpsQueue<T> {
             pub fn push_op(&mut self, op: T) -> &mut Self { self.0.push_back(op); self }
@@ -289,8 +291,12 @@ pub mod pallet {
         )
             -> Self
         {
-            let mut decisions = Vec::with_capacity(batch.len());
-            decisions.extend(sp_std::iter::repeat(ProposalMemberDecisionState::Pending).take(batch.len()));
+            let decisions = BTreeMap::from_iter(
+                batch.iter().map(|x| (
+                    x.account.clone(),
+                    ProposalMemberDecisionState::Pending
+                ))
+            );
             Self {
                 id: timepoint(),
                 batch,
@@ -311,11 +317,7 @@ pub mod pallet {
             where
                 BatchExec: FnOnce(ProposalBatch<T>) -> DispatchResultWithPostInfo
         {
-            let member_decision_state = self.batch.iter()
-                .zip(self.decisions.iter_mut())
-                .find(|x| &x.0.account == member)
-                .map(|(_, x)| x)
-                .ok_or(Error::<T>::NotAMember)?;
+            let member_decision_state = self.decisions.get_mut(member).ok_or(Error::<T>::NotAMember)?;
             
             ensure!(matches!(self.state, ProposalState::Pending), Error::<T>::AlreadyResolved);
             
@@ -348,7 +350,7 @@ pub mod pallet {
         }
         
         fn ready_to_exec(&self) -> bool {
-            let approved = self.decisions.iter()
+            let approved = self.decisions.values()
                 .all(|x: &ProposalMemberDecisionState| {
                     matches!(x, ProposalMemberDecisionState::Approved)
                 });
