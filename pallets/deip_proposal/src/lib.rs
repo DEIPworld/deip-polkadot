@@ -8,10 +8,10 @@ pub mod pallet {
     use frame_system::RawOrigin;
     
     use frame_support::pallet_prelude::*;
-    use frame_support::{Callable, Hashable};
+    use frame_support::{Hashable};
     use frame_support::weights::{PostDispatchInfo, GetDispatchInfo};
     
-    use frame_support::traits::UnfilteredDispatchable;
+    use frame_support::traits::{UnfilteredDispatchable, IsSubType};
     
     use sp_std::prelude::*;
     use sp_std::collections::{btree_map::BTreeMap};
@@ -31,7 +31,9 @@ pub mod pallet {
              GetDispatchInfo +
              From<frame_system::pallet::Call<Self>> +
              UnfilteredDispatchable<Origin = Self::Origin> +
-             frame_support::dispatch::Codec;
+             frame_support::dispatch::Codec + 
+             IsSubType<Call<Self>>;
+        // type NodeRuntimeCall: GetCallMetadata;
     }
     
     #[pallet::pallet]
@@ -53,6 +55,8 @@ pub mod pallet {
         AlreadyResolved,
         /// Member already made decision on Proposal
         AlreadyDecide,
+        /// Reach depth limit of nested proposals
+        ReachDepthLimit
     }
     
     #[pallet::event]
@@ -77,6 +81,44 @@ pub mod pallet {
 		fn build(&self) {}
 	}
     
+    use depth_limit::*; 
+    mod depth_limit {
+        use sp_std::collections::vec_deque::VecDeque;
+        use sp_std::prelude::*;
+        use frame_support::traits::IsSubType;
+        use super::{Config, Call, ProposalBatch};
+        
+        fn is_proposal<T: Config>(call: &<T as Config>::Call) -> Option<&ProposalBatch<T>> {
+            match call.is_sub_type() {
+                Some(Call::propose(batch)) => {
+                    Some(batch)
+                }
+                _ => None
+            }
+        }
+
+        pub fn nested_proposal_depth<T: Config>(top: &ProposalBatch<T>, depth_limit: Option<usize>) -> Option<usize> {
+            let mut stack = VecDeque::<Box<dyn Iterator<Item=&ProposalBatch<T>>>>::new();
+            stack.push_front(Box::new(top.iter().filter_map(|x| is_proposal::<T>(&x.call))));
+            let mut depth: usize = 1;
+            while !stack.is_empty() {
+                depth = depth.max(stack.len());
+                if let Some(ref limit) = depth_limit {
+                    if &depth > limit {
+                        return None;
+                    }
+                }
+                let cur = stack.front_mut().unwrap();
+                if let Some(nested) = cur.next() {
+                    stack.push_front(Box::new(nested.iter().filter_map(|x| is_proposal::<T>(&x.call))));
+                } else {
+                    stack.pop_front();
+                }
+            }
+            Some(depth)
+        }
+    }
+    
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::weight(10)]
@@ -87,6 +129,12 @@ pub mod pallet {
             -> DispatchResultWithPostInfo
         {
             let author = ensure_signed(origin)?;
+            
+            frame_support::debug::RuntimeLogger::init();
+            
+            let depth = nested_proposal_depth::<T>(&batch, Some(2));
+            frame_support::debug::debug!("DEPTH: {:?}", depth);
+            ensure!(depth.is_some(), Error::<T>::ReachDepthLimit);
             
             let proposal = DeipProposal::<T>::new(
                 batch,
@@ -100,13 +148,14 @@ pub mod pallet {
 
             StorageOpsTransaction::<T, _>::new()
                 .commit(move |ops| {
+                    let proposal_id = proposal.id;
+                    ops.push_op(StorageOps::PersistProposal(proposal));
                     ops.push_op(StorageOps::AddPendingProposal {
                         members,
-                        proposal_id: proposal.id,
+                        proposal_id,
                         author: author.clone(),
                     });
-                    ops.push_op(StorageOps::DepositEvent(Event::<T>::Proposed(author, proposal.id)));
-                    ops.push_op(StorageOps::PersistProposal(proposal));
+                    ops.push_op(StorageOps::DepositEvent(Event::<T>::Proposed(author, proposal_id)));
                 });
             
             Ok(Some(0).into())

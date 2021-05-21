@@ -325,7 +325,6 @@ construct_runtime!(
 		// Include the custom logic from the template pallet in the runtime.
 		TemplateModule: pallet_template::{Module, Call, Storage, Event<T>},
 		Deip: pallet_deip::{Module, Call, Storage, Event<T>, Config},
-		// DeipProposal: pallet_deip_proposal::{Module, Call, Storage, Event<T>, Config},
 		DeipProposal: pallet_deip_proposal::{Module, Call, Storage, Event<T>, Config},
 		Multisig: pallet_multisig::{Module, Call, Storage, Event<T>},
 	}
