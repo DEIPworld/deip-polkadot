@@ -85,36 +85,109 @@ pub mod pallet {
     mod depth_limit {
         use sp_std::collections::vec_deque::VecDeque;
         use sp_std::prelude::*;
+        use sp_std::iter::{Peekable, Iterator};
         use frame_support::traits::IsSubType;
-        use super::{Config, Call, ProposalBatch};
-        
-        fn is_proposal<T: Config>(call: &<T as Config>::Call) -> Option<&ProposalBatch<T>> {
-            match call.is_sub_type() {
-                Some(Call::propose(batch)) => {
-                    Some(batch)
+        use super::{Config, Call, ProposalBatch, ProposalBatchItemOf, ProposalId};
+
+        pub enum BatchItemKind<'a, T: Config> {
+            Propose(&'a ProposalBatch<T>),
+            Decide(&'a ProposalId),
+            Other
+        }
+        impl<'a, T: Config> BatchItemKind<'a, T> {
+            pub fn kind(item: &'a ProposalBatchItemOf<T>) -> BatchItemKind<'a, T> {
+                match item.call.is_sub_type() {
+                    Some(Call::propose(batch)) => {
+                        Self::Propose(batch)
+                    },
+                    Some(Call::decide(proposal_id, _decision)) => {
+                        Self::Decide(proposal_id)
+                    },
+                    _ => Self::Other
                 }
-                _ => None
+            }
+        }
+        
+        pub enum NestedProposalsAssertions {
+            DepthLimit,
+            SelfReference
+        }
+        // pub fn assert_nested_proposals<T: Config>(
+        //     root: &ProposalBatch<T>,
+        //     depth_limit: usize,
+        //     root_id: &ProposalId
+        // )
+        //     -> Option<NestedProposalsAssertions>
+        // {
+        //     let mut res = None;
+        //     let visitor = |node: Node<&ProposalBatchItemOf<T>>| {
+        //         if node.depth > depth_limit {
+        //             res = Some(NestedProposalsAssertions::DepthLimit);
+        //         }
+        //         if let BatchItemKind::Decide(ref proposal_id) = BatchItemKind::<T>::kind(node.data) {
+        //             if proposal_id == &root_id {
+        //                 res = Some(NestedProposalsAssertions::SelfReference);
+        //             }
+        //         }
+        //     };
+        //     traverse_nested_proposals(root, visitor);
+        //     res
+        // }
+        
+        pub struct Node<Data> {
+            depth: usize,
+            data: Data,
+        }
+        
+        pub fn traverse_nested_proposals<'a, T: Config>(
+            root: &'a ProposalBatch<T>,
+            mut visit_node: impl FnMut(Node<&'a ProposalBatchItemOf<T>>)
+        )
+        {
+            let mut stack = VecDeque::<Peekable<Box<dyn Iterator<Item=&ProposalBatchItemOf<T>>>>>::new();
+            let boxed: Box<dyn Iterator<Item=&ProposalBatchItemOf<T>>> = Box::new(root.iter());
+            stack.push_front(boxed.peekable());
+            let mut depth: usize = 1;
+            while !stack.is_empty() {
+                depth = stack.len();
+                let cur = stack.front_mut().unwrap();
+                while let Some(nested) = cur.next() {
+                    visit_node(Node { depth, data: nested });
+                    match BatchItemKind::<T>::kind(nested) {
+                        BatchItemKind::Propose(batch) => {
+                            let boxed: Box<dyn Iterator<Item=&ProposalBatchItemOf<T>>> = Box::new(batch.iter());
+                            stack.push_front(boxed.peekable());
+                            break
+                        },
+                        _ => ()
+                    }
+                }
+                if cur.peek().is_none() {
+                    stack.pop_front();
+                }
             }
         }
 
         pub fn nested_proposal_depth<T: Config>(top: &ProposalBatch<T>, depth_limit: Option<usize>) -> Option<usize> {
-            let mut stack = VecDeque::<Box<dyn Iterator<Item=&ProposalBatch<T>>>>::new();
-            stack.push_front(Box::new(top.iter().filter_map(|x| is_proposal::<T>(&x.call))));
+            // let mut stack = VecDeque::<Box<dyn Iterator<Item=&ProposalBatch<T>>>>::new();
+            // // stack.push_front(Box::new(top.iter().filter_map(|x| is_proposal::<T>(&x.call))));
+            // stack.push_front(Box::new(top.iter()));
             let mut depth: usize = 1;
-            while !stack.is_empty() {
-                depth = depth.max(stack.len());
-                if let Some(ref limit) = depth_limit {
-                    if &depth > limit {
-                        return None;
-                    }
-                }
-                let cur = stack.front_mut().unwrap();
-                if let Some(nested) = cur.next() {
-                    stack.push_front(Box::new(nested.iter().filter_map(|x| is_proposal::<T>(&x.call))));
-                } else {
-                    stack.pop_front();
-                }
-            }
+            // while !stack.is_empty() {
+            //     depth = depth.max(stack.len());
+            //     if let Some(ref limit) = depth_limit {
+            //         if &depth > limit {
+            //             return None;
+            //         }
+            //     }
+            //     let cur = stack.front_mut().unwrap();
+            //     if let Some(nested) = cur.next() {
+            //         // stack.push_front(Box::new(nested.iter().filter_map(|x| is_proposal::<T>(&x.call))));
+            //         stack.push_front(Box::new(nested.iter()));
+            //     } else {
+            //         stack.pop_front();
+            //     }
+            // }
             Some(depth)
         }
     }
