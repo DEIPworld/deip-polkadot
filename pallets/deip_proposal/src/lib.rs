@@ -56,7 +56,9 @@ pub mod pallet {
         /// Member already made decision on Proposal
         AlreadyDecide,
         /// Reach depth limit of nested proposals
-        ReachDepthLimit
+        ReachDepthLimit,
+        /// Self-referential proposal
+        SelfReferential
     }
     
     #[pallet::event]
@@ -81,14 +83,45 @@ pub mod pallet {
 		fn build(&self) {}
 	}
     
-    use depth_limit::*; 
-    mod depth_limit {
-        use sp_std::collections::vec_deque::VecDeque;
-        use sp_std::prelude::*;
-        use sp_std::iter::{Peekable, Iterator};
+    use proposal_assertions::*;
+    mod proposal_assertions {
+        use super::{
+            Config, DeipProposal, BatchTreeNode, StopTraverse,
+            BatchItemKind, ProposalBatchItemOf, traverse_batch_tree
+        };
+        pub enum ProposalAssertions {
+            DepthLimit,
+            SelfReference
+        }
+        pub fn assert_proposal<T: Config>(
+            proposal: &DeipProposal<T>,
+            depth_limit: usize,
+        )
+            -> Option<ProposalAssertions>
+        {
+            let mut res = None;
+            traverse_batch_tree::<T, _>(&proposal.batch, |node: BatchTreeNode<&ProposalBatchItemOf<T>>| {
+                if node.depth > depth_limit {
+                    res = Some(ProposalAssertions::DepthLimit);
+                    return Some(StopTraverse)
+                }
+                if let BatchItemKind::Decide(proposal_id) = BatchItemKind::<T>::kind(node.data) {
+                    if proposal_id == &proposal.id {
+                        res = Some(ProposalAssertions::SelfReference);
+                        return Some(StopTraverse)
+                    }
+                }
+                None
+            });
+            res
+        }
+    }
+    
+    use batch_item_kind::*;
+    mod batch_item_kind {
         use frame_support::traits::IsSubType;
-        use super::{Config, Call, ProposalBatch, ProposalBatchItemOf, ProposalId};
-
+        use super::{Config, Call, ProposalBatch, ProposalId, ProposalBatchItemOf};
+        
         pub enum BatchItemKind<'a, T: Config> {
             Propose(&'a ProposalBatch<T>),
             Decide(&'a ProposalId),
@@ -107,53 +140,38 @@ pub mod pallet {
                 }
             }
         }
-        
-        pub enum NestedProposalsAssertions {
-            DepthLimit,
-            SelfReference
-        }
-        // pub fn assert_nested_proposals<T: Config>(
-        //     root: &ProposalBatch<T>,
-        //     depth_limit: usize,
-        //     root_id: &ProposalId
-        // )
-        //     -> Option<NestedProposalsAssertions>
-        // {
-        //     let mut res = None;
-        //     let visitor = |node: Node<&ProposalBatchItemOf<T>>| {
-        //         if node.depth > depth_limit {
-        //             res = Some(NestedProposalsAssertions::DepthLimit);
-        //         }
-        //         if let BatchItemKind::Decide(ref proposal_id) = BatchItemKind::<T>::kind(node.data) {
-        //             if proposal_id == &root_id {
-        //                 res = Some(NestedProposalsAssertions::SelfReference);
-        //             }
-        //         }
-        //     };
-        //     traverse_nested_proposals(root, visitor);
-        //     res
-        // }
-        
-        pub struct Node<Data> {
-            depth: usize,
-            data: Data,
+    }
+    
+    use batch_tree::*; 
+    mod batch_tree {
+        use sp_std::collections::vec_deque::VecDeque;
+        use sp_std::prelude::*;
+        use sp_std::iter::{Peekable, Iterator};
+        use super::{Config, ProposalBatch, ProposalBatchItemOf, BatchItemKind};
+
+        pub struct BatchTreeNode<Data> {
+            pub depth: usize,
+            pub data: Data,
         }
         
-        pub fn traverse_nested_proposals<'a, T: Config>(
+        pub struct StopTraverse;
+        
+        pub fn traverse_batch_tree<'a, T: Config, V>(
             root: &'a ProposalBatch<T>,
-            mut visit_node: impl FnMut(Node<&'a ProposalBatchItemOf<T>>)
+            mut visit_node: V
         )
+            where V: FnMut(BatchTreeNode<&'a ProposalBatchItemOf<T>>) -> Option<StopTraverse>
         {
             let mut stack = VecDeque::<Peekable<Box<dyn Iterator<Item=&ProposalBatchItemOf<T>>>>>::new();
             let boxed: Box<dyn Iterator<Item=&ProposalBatchItemOf<T>>> = Box::new(root.iter());
             stack.push_front(boxed.peekable());
-            let mut depth: usize = 1;
             while !stack.is_empty() {
-                depth = stack.len();
-                let cur = stack.front_mut().unwrap();
-                while let Some(nested) = cur.next() {
-                    visit_node(Node { depth, data: nested });
-                    match BatchItemKind::<T>::kind(nested) {
+                let depth = stack.len();
+                while let Some(data) = stack.front_mut().unwrap().next() {
+                    if visit_node(BatchTreeNode { depth, data }).is_some() {
+                        return
+                    }
+                    match BatchItemKind::<T>::kind(data) {
                         BatchItemKind::Propose(batch) => {
                             let boxed: Box<dyn Iterator<Item=&ProposalBatchItemOf<T>>> = Box::new(batch.iter());
                             stack.push_front(boxed.peekable());
@@ -162,33 +180,10 @@ pub mod pallet {
                         _ => ()
                     }
                 }
-                if cur.peek().is_none() {
+                if stack.front_mut().unwrap().peek().is_none() {
                     stack.pop_front();
                 }
             }
-        }
-
-        pub fn nested_proposal_depth<T: Config>(top: &ProposalBatch<T>, depth_limit: Option<usize>) -> Option<usize> {
-            // let mut stack = VecDeque::<Box<dyn Iterator<Item=&ProposalBatch<T>>>>::new();
-            // // stack.push_front(Box::new(top.iter().filter_map(|x| is_proposal::<T>(&x.call))));
-            // stack.push_front(Box::new(top.iter()));
-            let mut depth: usize = 1;
-            // while !stack.is_empty() {
-            //     depth = depth.max(stack.len());
-            //     if let Some(ref limit) = depth_limit {
-            //         if &depth > limit {
-            //             return None;
-            //         }
-            //     }
-            //     let cur = stack.front_mut().unwrap();
-            //     if let Some(nested) = cur.next() {
-            //         // stack.push_front(Box::new(nested.iter().filter_map(|x| is_proposal::<T>(&x.call))));
-            //         stack.push_front(Box::new(nested.iter()));
-            //     } else {
-            //         stack.pop_front();
-            //     }
-            // }
-            Some(depth)
         }
     }
     
@@ -205,15 +200,11 @@ pub mod pallet {
             
             frame_support::debug::RuntimeLogger::init();
             
-            let depth = nested_proposal_depth::<T>(&batch, Some(2));
-            frame_support::debug::debug!("DEPTH: {:?}", depth);
-            ensure!(depth.is_some(), Error::<T>::ReachDepthLimit);
-            
-            let proposal = DeipProposal::<T>::new(
+            let proposal = DeipProposal::<T>::create(
                 batch,
                 author.clone(),
                 <DeipProposal<T>>::timepoint
-            );
+            )?;
             
             let members: Vec<T::AccountId> = proposal.batch.iter()
                 .map(|m| m.account.clone())
@@ -406,12 +397,12 @@ pub mod pallet {
     impl<T: Config> DeipProposal<T> {
         fn timepoint() -> ProposalId { pallet_multisig::Module::<T>::timepoint().twox_256() }
         
-        fn new(
+        fn create(
             batch: Vec<ProposalBatchItemOf<T>>,
             author: T::AccountId,
             timepoint: impl FnOnce() -> ProposalId
         )
-            -> Self
+            -> Result<Self, Error<T>>
         {
             let decisions = BTreeMap::from_iter(
                 batch.iter().map(|x| (
@@ -419,12 +410,21 @@ pub mod pallet {
                     ProposalMemberDecisionState::Pending
                 ))
             );
-            Self {
+            let proposal = Self {
                 id: timepoint(),
                 batch,
                 decisions,
                 state: ProposalState::Pending,
                 author
+            };
+            match assert_proposal(&proposal, 2) {
+                Some(ProposalAssertions::DepthLimit) => {
+                    Err(Error::<T>::ReachDepthLimit)
+                },
+                Some(ProposalAssertions::SelfReference) => {
+                    Err(Error::<T>::SelfReferential)
+                },
+                None => Ok(proposal),
             }
         }
         
