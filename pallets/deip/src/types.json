@@ -8,13 +8,14 @@
   },
   "ProposalBatchItemOf": {
     "account": "AccountId",
-    "extrinsic": "Call"
+    "call": "Call"
   },
   "ProposalId": "[u8; 32]",
   "PendingProposalsMap": "BTreeMap<ProposalId,AccountId>",
   "DeipProposal": {
+    "id": "ProposalId",
     "batch": "Vec<ProposalBatchItemOf>",
-    "decisions": "Vec<ProposalMemberDecisionState>",
+    "decisions": "BTreeMap<AccountId,ProposalMemberDecisionState>",
     "state": "ProposalState",
     "author": "AccountId"
   },
@@ -23,7 +24,7 @@
       "Pending",
       "Rejected",
       "Done",
-      "Fail"
+      "Failed(DispatchError)"
     ]
   },
   "ProposalMemberDecisionState": {
