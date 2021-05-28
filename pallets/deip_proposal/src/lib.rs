@@ -1,8 +1,29 @@
+//! # Proposal Module
+//! A module for doing multi-account batch-transaction.
+//! 
+//! - [`Config`](./trait.Config.html)
+//! - [`Call`](./enum.Call.html)
+//!
+//! ## Overview
+//!
+//! ## Interface
+//!
+//! ### Dispatchable Functions
+//!
+//! * `propose` - Create proposal. Corresponds to `CREATE_PROPOSAL` operation of DEIP protocol
+//! * `decide` - Make decision on proposal being a member of it. Corresponds to `UPDATE_PROPOSAL` operation of DEIP protocol
+//! * `delete` - Corresponds to `DELETE_PROPOSAL` operation of DEIP protocol. (Not implemented)
+//!
+//! [`Call`]: ./enum.Call.html
+//! [`Config`]: ./trait.Config.html
+
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[doc(inline)]
 pub use pallet::*;
 
 #[frame_support::pallet]
+#[doc(hidden)]
 pub mod pallet {
     use frame_system::pallet_prelude::*;
     use frame_system::RawOrigin;
@@ -16,16 +37,18 @@ pub mod pallet {
     use sp_std::prelude::*;
     use sp_std::collections::{btree_map::BTreeMap};
     use sp_std::iter::FromIterator;
-    // use sp_std::marker::PhantomData;
     use sp_std::fmt::Debug;
     
     use sp_runtime::traits::Dispatchable;
     
     use pallet_multisig;
 
+    /// Configuration trait
     #[pallet::config]
     pub trait Config: frame_system::Config + pallet_multisig::Config {
+        /// Type represents events
         type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
+        /// Type represents particular call from batch-transaction 
         type Call: Parameter +
              Dispatchable<Origin = Self::Origin, PostInfo = PostDispatchInfo> +
              GetDispatchInfo +
@@ -33,13 +56,14 @@ pub mod pallet {
              UnfilteredDispatchable<Origin = Self::Origin> +
              frame_support::dispatch::Codec + 
              IsSubType<Call<Self>>;
-        // type NodeRuntimeCall: GetCallMetadata;
     }
     
+    #[doc(hidden)]
     #[pallet::pallet]
     #[pallet::generate_store(pub(super) trait Store)]
     pub struct Pallet<T>(_);
     
+    #[doc(hidden)]
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {}
     
@@ -65,34 +89,43 @@ pub mod pallet {
     #[pallet::metadata(u32 = "SpecialU32")]
     #[pallet::generate_deposit(fn deposit_event)]
     pub enum Event<T: Config> {
+        /// Emits when proposal created
         Proposed(T::AccountId, ProposalId),
+        /// Emits when proposal rejected by it's member
         Rejected(T::AccountId),
+        // Emits when proposal approved rejected by it's member
         Approved(T::AccountId),
+        /// Emits when proposal batch executed successful
         Done,
+        /// Emits when proposal batch execution failed
         Failed(DispatchError)
     }
     
+    #[doc(hidden)]
     #[pallet::genesis_config]
 	#[derive(Default)]
-	pub struct GenesisConfig {
-		// _myfield: u32,
-	}
+	pub struct GenesisConfig {}
     
     #[pallet::genesis_build]
 	impl<T: Config> GenesisBuild<T> for GenesisConfig {
 		fn build(&self) {}
 	}
     
-    use proposal_assertions::*;
+    pub use proposal_assertions::*;
+    /// Module contains some proposal assertions
     mod proposal_assertions {
         use super::{
             Config, DeipProposal, BatchTreeNode, StopTraverse,
             BatchItemKind, ProposalBatchItemOf, traverse_batch_tree
         };
+        /// Proposal assertions enumeration
         pub enum ProposalAssertions {
+            /// Reached depth limit of nested proposals
             DepthLimit,
+            /// Proposal has self-references
             SelfReference
         }
+        /// Perform some assertions on proposal object
         pub fn assert_proposal<T: Config>(
             proposal: &DeipProposal<T>,
             depth_limit: usize,
@@ -118,16 +151,22 @@ pub mod pallet {
     }
     
     use batch_item_kind::*;
-    mod batch_item_kind {
+    #[doc(no_inline)]
+    /// Module contains classification of the proposal batch item
+    pub mod batch_item_kind {
         use frame_support::traits::IsSubType;
         use super::{Config, Call, ProposalBatch, ProposalId, ProposalBatchItemOf};
         
+        /// Batch item kinds
         pub enum BatchItemKind<'a, T: Config> {
+            /// Batch item contains `propose` dispatchable
             Propose(&'a ProposalBatch<T>),
+            /// Batch item contains `decide` dispatchable
             Decide(&'a ProposalId),
             Other
         }
         impl<'a, T: Config> BatchItemKind<'a, T> {
+            /// Classify proposal batch item
             pub fn kind(item: &'a ProposalBatchItemOf<T>) -> BatchItemKind<'a, T> {
                 match item.call.is_sub_type() {
                     Some(Call::propose(batch)) => {
@@ -142,20 +181,27 @@ pub mod pallet {
         }
     }
     
-    use batch_tree::*; 
-    mod batch_tree {
+    use batch_tree::*;
+    /// Module contains operations on nested proposals
+    #[doc(no_inline)]
+    pub mod batch_tree {
         use sp_std::collections::vec_deque::VecDeque;
         use sp_std::prelude::*;
         use sp_std::iter::{Peekable, Iterator};
         use super::{Config, ProposalBatch, ProposalBatchItemOf, BatchItemKind};
-
+        
+        /// Visited tree node abstraction
         pub struct BatchTreeNode<Data> {
+            /// Nested level
             pub depth: usize,
             pub data: Data,
         }
         
+        /// Marker-type used for traverse operation flow control 
         pub struct StopTraverse;
         
+        /// Batch tree traverse operation.
+        /// Invokes `visit_node` callback on each node and accepts flow-control commands from it
         pub fn traverse_batch_tree<'a, T: Config, V>(
             root: &'a ProposalBatch<T>,
             mut visit_node: V
@@ -268,6 +314,7 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
+        /// Execute batch as atomic transaction
         #[frame_support::transactional]
         fn exec_batch(batch: ProposalBatch<T>) -> DispatchResultWithPostInfo
         {
@@ -312,8 +359,9 @@ pub mod pallet {
     #[allow(type_alias_bounds)]
     pub type PendingProposalsMap<T: Config> = BTreeMap<ProposalId, T::AccountId>;
     
+    /// Specialized version of [`BatchItem`]
     #[allow(type_alias_bounds)]
-    pub type ProposalBatchItemOf<T: Config> = BatchItemX<
+    pub type ProposalBatchItemOf<T: Config> = BatchItem<
         <T as frame_system::Config>::AccountId,
         <T as Config>::Call
     >;
@@ -321,25 +369,38 @@ pub mod pallet {
     #[allow(type_alias_bounds)]
     pub type ProposalBatch<T: Config> = Vec<ProposalBatchItemOf<T>>;
     
+    /// Proposal object
     #[derive(Debug, Encode, Decode)]
     pub struct DeipProposal<T: Config> {
+        /// Proposal ID
         id: ProposalId,
+        /// Batch-transaction items
         batch: ProposalBatch<T>,
+        /// Member decisions mapping
         decisions: BTreeMap<T::AccountId, ProposalMemberDecisionState>,
+        /// Proposal state
         state: ProposalState,
+        /// Proposal author
         author: T::AccountId
     }
     
+    /// Proposal state
     #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode)]
     pub enum ProposalState {
+        /// Pending proposal
         Pending,
+        /// Rejected proposal
         Rejected,
+        /// Batch transaction executed successfully
         Done,
+        /// Batch transaction execution failed
         Failed(DispatchError)
     }
     
     use storage_ops::*;
-    mod storage_ops {
+    #[doc(no_inline)]
+    /// Module contains abstractions over pallet storage operations
+    pub mod storage_ops {
         use sp_std::collections::vec_deque::VecDeque;
         use sp_std::marker::PhantomData;
         use sp_std::prelude::*;
@@ -347,9 +408,13 @@ pub mod pallet {
             Config, DeipProposal, Event, ProposalId,
             ProposalStorage, Pallet, PendingProposals};
         
+        /// Storage operations
         pub enum StorageOps<T: Config> {
+            /// Upsert proposal object
             PersistProposal(DeipProposal<T>),
+            /// Deposit event
             DepositEvent(Event<T>),
+            /// Update pending proposals map
             AddPendingProposal {
                 members: Vec<T::AccountId>,
                 proposal_id: ProposalId,
@@ -357,15 +422,20 @@ pub mod pallet {
             },
         }
         
+        /// Fifo-queue for storage operations
         pub struct StorageOpsQueue<T>(VecDeque<T>);
         impl<T> StorageOpsQueue<T> {
+            /// Add storage operation
             pub fn push_op(&mut self, op: T) -> &mut Self { self.0.push_back(op); self }
             fn pop_op(&mut self) -> Option<T> { self.0.pop_front() }
         }
 
+        /// Multi-ops storage transaction 
         pub struct StorageOpsTransaction<T: Config, Ops=StorageOps<T>>(StorageOpsQueue<Ops>, PhantomData<T>);
         impl<T: Config> StorageOpsTransaction<T, StorageOps<T>> {
+            /// New storage transaction
             pub fn new() -> Self { Self(StorageOpsQueue(VecDeque::new()), Default::default()) }
+            /// Execute callable then perform storage operations provided via ops-queue
             pub fn commit<R>(mut self, transactional: impl FnOnce(&mut StorageOpsQueue<StorageOps<T>>) -> R) -> R {
                 let result = transactional(&mut self.0);
                 while let Some(op) = self.0.pop_op() {
@@ -395,8 +465,12 @@ pub mod pallet {
     }
     
     impl<T: Config> DeipProposal<T> {
+        /// Generate "Timepoint" aka unique proposal ID.
+        /// Implemented as hash-value of Timepoint from `pallet_multisig`   
         fn timepoint() -> ProposalId { pallet_multisig::Module::<T>::timepoint().twox_256() }
         
+        /// Create proposal object.
+        /// Fail if input arguments violates proposal assertions (See [proposal_assertions](./module.proposal_assertions))
         fn create(
             batch: Vec<ProposalBatchItemOf<T>>,
             author: T::AccountId,
@@ -428,6 +502,7 @@ pub mod pallet {
             }
         }
         
+        /// 
         fn decide<BatchExec>(
             mut self,
             member: &T::AccountId,
@@ -480,8 +555,9 @@ pub mod pallet {
         }
     }
     
+    /// Batch item generic container
     #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
-    pub struct BatchItemX<Account, CallT> {
+    pub struct BatchItem<Account, CallT> {
         account: Account,
         call: CallT,
     }
