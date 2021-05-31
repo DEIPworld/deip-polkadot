@@ -37,7 +37,6 @@ pub mod pallet {
     use sp_std::prelude::*;
     use sp_std::collections::{btree_map::BTreeMap};
     use sp_std::iter::FromIterator;
-    use sp_std::fmt::Debug;
     
     use sp_runtime::traits::Dispatchable;
     
@@ -75,10 +74,8 @@ pub mod pallet {
         AlreadyExist,
         /// Current origin is not a member of Proposal
         NotAMember,
-        /// Proposal already resolved
+        /// Proposal already resolved (done, failed or rejected)
         AlreadyResolved,
-        /// Member already made decision on Proposal
-        AlreadyDecide,
         /// Reach depth limit of nested proposals
         ReachDepthLimit,
         /// Self-referential proposal
@@ -90,15 +87,26 @@ pub mod pallet {
     #[pallet::generate_deposit(fn deposit_event)]
     pub enum Event<T: Config> {
         /// Emits when proposal created
-        Proposed(T::AccountId, ProposalId),
-        /// Emits when proposal rejected by it's member
-        Rejected(T::AccountId),
-        // Emits when proposal approved rejected by it's member
-        Approved(T::AccountId),
-        /// Emits when proposal batch executed successful
-        Done,
-        /// Emits when proposal batch execution failed
-        Failed(DispatchError)
+        Proposed {
+            author: T::AccountId,
+            batch: ProposalBatch<T>,
+            proposal_id: ProposalId
+        },
+        /// Emits when proposal approved by it's member
+        Approved {
+            member: T::AccountId,
+            proposal_id: ProposalId
+        },
+        /// Emits when member revokes his approval
+        RevokedApproval {
+            member: T::AccountId,
+            proposal_id: ProposalId
+        },
+        /// Emits when proposal resolved (rejected / done / failed)
+        Resolved {
+            member: T::AccountId,
+            proposal_id: ProposalId
+        }
     }
     
     #[doc(hidden)]
@@ -248,24 +256,21 @@ pub mod pallet {
             
             let proposal = DeipProposal::<T>::create(
                 batch,
-                author.clone(),
+                author,
                 <DeipProposal<T>>::timepoint
             )?;
-            
-            let members: Vec<T::AccountId> = proposal.batch.iter()
-                .map(|m| m.account.clone())
-                .collect();
 
             StorageOpsTransaction::<T, _>::new()
                 .commit(move |ops| {
+                    let author = proposal.author.clone();
+                    let batch = proposal.batch.clone();
                     let proposal_id = proposal.id;
-                    ops.push_op(StorageOps::PersistProposal(proposal));
-                    ops.push_op(StorageOps::AddPendingProposal {
-                        members,
-                        proposal_id,
-                        author: author.clone(),
-                    });
-                    ops.push_op(StorageOps::DepositEvent(Event::<T>::Proposed(author, proposal_id)));
+                    ops.push_op(StorageOps::CreateProposal(proposal));
+                    ops.push_op(StorageOps::DepositEvent(Event::<T>::Proposed {
+                        author,
+                        batch,
+                        proposal_id
+                    }));
                 });
             
             Ok(Some(0).into())
@@ -370,14 +375,14 @@ pub mod pallet {
     pub type ProposalBatch<T: Config> = Vec<ProposalBatchItemOf<T>>;
     
     /// Proposal object
-    #[derive(Debug, Encode, Decode)]
+    #[derive(Debug, Encode, Decode, Clone, Eq, PartialEq)]
     pub struct DeipProposal<T: Config> {
         /// Proposal ID
         id: ProposalId,
         /// Batch-transaction items
         batch: ProposalBatch<T>,
         /// Member decisions mapping
-        decisions: BTreeMap<T::AccountId, ProposalMemberDecisionState>,
+        decisions: BTreeMap<T::AccountId, ProposalMemberDecision>,
         /// Proposal state
         state: ProposalState,
         /// Proposal author
@@ -410,16 +415,14 @@ pub mod pallet {
         
         /// Storage operations
         pub enum StorageOps<T: Config> {
-            /// Upsert proposal object
-            PersistProposal(DeipProposal<T>),
             /// Deposit event
             DepositEvent(Event<T>),
-            /// Update pending proposals map
-            AddPendingProposal {
-                members: Vec<T::AccountId>,
-                proposal_id: ProposalId,
-                author: T::AccountId,
-            },
+            /// Create proposal
+            CreateProposal(DeipProposal<T>),
+            /// Update proposal
+            UpdateProposal(DeipProposal<T>),
+            /// Delete proposal
+            DeleteProposal(DeipProposal<T>),
         }
         
         /// Fifo-queue for storage operations
@@ -440,23 +443,36 @@ pub mod pallet {
                 let result = transactional(&mut self.0);
                 while let Some(op) = self.0.pop_op() {
                     match op {
-                        StorageOps::PersistProposal(proposal) => {
-                            <ProposalStorage<T>>::insert(proposal.author.clone(), proposal.id, proposal);
-                        },
                         StorageOps::DepositEvent(event) => {
                             <Pallet<T>>::deposit_event(event);
                         },
-                        StorageOps::AddPendingProposal {
-                            members,
-                            proposal_id,
-                            author
-                        } => {
+                        StorageOps::CreateProposal(proposal) => {
+                            let members = proposal.decisions.keys().cloned();
                             for m in members {
                                 PendingProposals::<T>::mutate(m, |x| {
-                                    x.insert(proposal_id, author.clone());
+                                    x.insert(proposal.id, proposal.author.clone());
                                 });
                             }
-                        }
+                            <ProposalStorage<T>>::insert(proposal.author.clone(), proposal.id, proposal);
+                        },
+                        StorageOps::UpdateProposal(proposal) => {
+                            <ProposalStorage<T>>::insert(proposal.author.clone(), proposal.id, proposal)
+                        },
+                        StorageOps::DeleteProposal(proposal) => {
+                            let DeipProposal::<T> {
+                                id: proposal_id,
+                                decisions,
+                                author,
+                                .. 
+                            } = proposal;
+                            let members = decisions.keys();
+                            for m in members {
+                                PendingProposals::<T>::mutate(m, |x| {
+                                    x.remove(&proposal_id);
+                                });
+                            }
+                            <ProposalStorage<T>>::remove(author, proposal_id);
+                        },
                     }
                 }
                 result
@@ -481,7 +497,7 @@ pub mod pallet {
             let decisions = BTreeMap::from_iter(
                 batch.iter().map(|x| (
                     x.account.clone(),
-                    ProposalMemberDecisionState::Pending
+                    ProposalMemberDecision::Pending
                 ))
             );
             let proposal = Self {
@@ -514,42 +530,60 @@ pub mod pallet {
             where
                 BatchExec: FnOnce(ProposalBatch<T>) -> DispatchResultWithPostInfo
         {
-            let member_decision_state = self.decisions.get_mut(member).ok_or(Error::<T>::NotAMember)?;
+            let member_decision = self.decisions.get_mut(member).ok_or(Error::<T>::NotAMember)?;
             
             ensure!(matches!(self.state, ProposalState::Pending), Error::<T>::AlreadyResolved);
-            
-            let batch_exec_result = match member_decision_state.decide(decision) {
-                Err(_) | Ok(ProposalMemberDecisionState::Pending) => Err(Error::<T>::AlreadyDecide)?,
-                Ok(ProposalMemberDecisionState::Declined) => {
-                    self.state = ProposalState::Rejected;
-                    storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Rejected(member.clone())));
-                    None
+
+            match member_decision.decide(decision) {
+                Err(_) => return Err(Error::<T>::AlreadyResolved),
+                Ok(None) => Ok(None),
+                Ok(Some(ProposalMemberDecision::Pending)) => {
+                    storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::RevokedApproval {
+                        member: member.clone(),
+                        proposal_id: self.id
+                    }));
+                    storage_ops.push_op(StorageOps::UpdateProposal(self));
+                    Ok(None)
                 },
-                Ok(ProposalMemberDecisionState::Approved) => {
-                    storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Approved(member.clone())));
+                Ok(Some(ProposalMemberDecision::Reject)) => {
+                    self.state = ProposalState::Rejected;
+                    storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Resolved {
+                        member: member.clone(),
+                        proposal_id: self.id
+                    }));
+                    storage_ops.push_op(StorageOps::DeleteProposal(self));
+                    Ok(None)
+                },
+                Ok(Some(ProposalMemberDecision::Approve)) => {
                     if self.ready_to_exec() {
                         let batch_exec_result = batch_exec(self.batch.clone());
-                        self.state = if let Err(ref err) = batch_exec_result {
-                            storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Failed(err.error.clone())));
+                        self.state = if let Err(ref err) = batch_exec_result { 
                             ProposalState::Failed(err.error.clone())
                         } else {
-                            storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Done));
                             ProposalState::Done
                         };
-                        Some(batch_exec_result)
-                    } else { None }
+                        storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Resolved {
+                            member: member.clone(),
+                            proposal_id: self.id,
+                        }));
+                        storage_ops.push_op(StorageOps::DeleteProposal(self));
+                        Ok(Some(batch_exec_result))
+                    } else {
+                        storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Approved {
+                            member: member.clone(),
+                            proposal_id: self.id,
+                        }));
+                        storage_ops.push_op(StorageOps::UpdateProposal(self));
+                        Ok(None)
+                    }
                 },
-            };
-            
-            storage_ops.push_op(StorageOps::PersistProposal(self));
-            
-            Ok(batch_exec_result)
+            }
         }
         
         fn ready_to_exec(&self) -> bool {
             let approved = self.decisions.values()
-                .all(|x: &ProposalMemberDecisionState| {
-                    matches!(x, ProposalMemberDecisionState::Approved)
+                .all(|x: &ProposalMemberDecision| {
+                    matches!(x, ProposalMemberDecision::Approve)
                 });
             approved && matches!(self.state, ProposalState::Pending)
         }
@@ -562,30 +596,37 @@ pub mod pallet {
         call: CallT,
     }
     
-    #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode)]
-    pub enum ProposalMemberDecisionState {
-        Pending,
-        Approved,
-        Declined
-    }
-    impl ProposalMemberDecisionState {
-        fn decide(&mut self, decision: ProposalMemberDecision) -> Result<Self, Self> {
-            match self {
-                Self::Pending => {
-                    *self = match decision {
-                        ProposalMemberDecision::Approve => Self::Approved,
-                        ProposalMemberDecision::Decline => Self::Declined,
-                    };
-                    Ok(*self)
-                },
-                other => Err(*other),
-            }
-        }
-    }
-    
+    /// Proposal member decision
     #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode)]
     pub enum ProposalMemberDecision {
+        /// Pending state
+        Pending,
+        /// Approved state
         Approve,
-        Decline
+        /// Rejected state
+        Reject
+    }
+    impl ProposalMemberDecision {
+        /// Make decision state transition.
+        /// 
+        /// Except of transitions from `Reject` current state all another transitions are allowed.
+        /// `Ok(None)` result means transition to the same state.
+        /// 
+        /// This function must stay private to disallow state transitions from code outsides
+        /// of this module.
+        /// You should prefer to use [`DeipProposal`] object as a pallet logic's main interface
+        /// 
+        fn decide(&mut self, decision: Self) -> Result<Option<Self>, Self> {
+            let cur = self;
+            let new = &decision;
+            match (&cur, new) {
+                (Self::Reject, _) => Err(*cur),
+                _ => {
+                    let transition = cur != new;
+                    *cur = *new;
+                    if transition { Ok(Some(*cur)) } else { Ok(None) }
+                },
+            }
+        }
     }
 }
