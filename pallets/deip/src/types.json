@@ -15,7 +15,7 @@
   "DeipProposal": {
     "id": "ProposalId",
     "batch": "Vec<ProposalBatchItemOf>",
-    "decisions": "BTreeMap<AccountId,ProposalMemberDecisionState>",
+    "decisions": "BTreeMap<AccountId,ProposalMemberDecision>",
     "state": "ProposalState",
     "author": "AccountId"
   },
@@ -27,17 +27,11 @@
       "Failed(DispatchError)"
     ]
   },
-  "ProposalMemberDecisionState": {
-    "_enum": [
-      "Pending",
-      "Approved",
-      "Declined"
-    ]
-  },
   "ProposalMemberDecision": {
     "_enum": [
+      "Pending",
       "Approve",
-      "Decline"
+      "Reject"
     ]
   },
   "Domain": "H160",
