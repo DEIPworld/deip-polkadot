@@ -111,7 +111,8 @@ pub mod pallet {
         /// Emits when proposal resolved (rejected / done / failed)
         Resolved {
             member: T::AccountId,
-            proposal_id: ProposalId
+            proposal_id: ProposalId,
+            state: ProposalState
         }
     }
     
@@ -416,7 +417,7 @@ pub mod pallet {
         use sp_std::marker::PhantomData;
         use sp_std::prelude::*;
         use super::{
-            Config, DeipProposal, Event, ProposalId,
+            Config, DeipProposal, Event,
             ProposalStorage, Pallet, PendingProposals};
         
         /// Storage operations
@@ -555,7 +556,8 @@ pub mod pallet {
                     self.state = ProposalState::Rejected;
                     storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Resolved {
                         member: member.clone(),
-                        proposal_id: self.id
+                        proposal_id: self.id,
+                        state: self.state
                     }));
                     storage_ops.push_op(StorageOps::DeleteProposal(self));
                     Ok(None)
@@ -571,6 +573,7 @@ pub mod pallet {
                         storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Resolved {
                             member: member.clone(),
                             proposal_id: self.id,
+                            state: self.state
                         }));
                         storage_ops.push_op(StorageOps::DeleteProposal(self));
                         Ok(Some(batch_exec_result))
