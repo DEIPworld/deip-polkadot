@@ -1,22 +1,28 @@
 //! # Proposal Module
-//! A module for doing multi-account batch-transaction.
+//! A module for doing a propose of transactions composed of an arbitrary set of operations
+//! that requires approvals from multiple accounts to been executed.
 //! 
 //! - [`Config`](./trait.Config.html)
 //! - [`Call`](./enum.Call.html)
 //!
 //! ## Overview
+//! This module contains functionality to create a postponed transaction (a proposal)
+//! where members of it are proposed to make decision on execution of of corresponding operations.
+//! When all members of proposal add them approvals then the bunch of operations (a batch)
+//! that is a list of dispatchables with their signature origins (accounts)
+//! will be executed as a single transaction.
 //!
 //! ## Interface
 //!
 //! ### Dispatchable Functions
 //!
-//! * `propose` - Create proposal. Corresponds to `CREATE_PROPOSAL` operation of DEIP protocol
-//! * `decide` - Make decision on proposal being a member of it. Corresponds to `UPDATE_PROPOSAL` operation of DEIP protocol
-//! * `delete` - Corresponds to `DELETE_PROPOSAL` operation of DEIP protocol. (Not implemented)
+//! * `propose` - Propose a postponed transaction.
+//! * `decide` - Make decision on a proposed transaction being a member of it.
 //!
 //! [`Call`]: ./enum.Call.html
 //! [`Config`]: ./trait.Config.html
 
+// Ensure we're `no_std` when compiling for Wasm.
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[doc(inline)]
