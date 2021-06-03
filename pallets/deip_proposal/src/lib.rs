@@ -25,6 +25,9 @@
 // Ensure we're `no_std` when compiling for Wasm.
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(test)]
+mod tests;
+
 #[doc(inline)]
 pub use pallet::*;
 
@@ -46,11 +49,9 @@ pub mod pallet {
     
     use sp_runtime::traits::Dispatchable;
     
-    use pallet_multisig;
-
     /// Configuration trait
     #[pallet::config]
-    pub trait Config: frame_system::Config + pallet_multisig::Config {
+    pub trait Config: frame_system::Config {
         /// Type represents events
         type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
         /// Type represents particular call from batch-transaction 
@@ -486,11 +487,28 @@ pub mod pallet {
             }
         }
     }
+
+    
+    /// A global extrinsic index, formed as the extrinsic index within a block, together with that
+    /// block's height. This allows a transaction in which a multisig operation of a particular
+    /// composite was created to be uniquely identified.
+    #[derive(Copy, Clone, Eq, PartialEq, Encode, Decode, Default, RuntimeDebug)]
+    struct Timepoint<BlockNumber> {
+        /// The height of the chain at the point in time.
+        height: BlockNumber,
+        /// The index of the extrinsic at the point in time.
+        index: u32,
+    }
     
     impl<T: Config> DeipProposal<T> {
         /// Generate "Timepoint" aka unique proposal ID.
         /// Implemented as hash-value of Timepoint from `pallet_multisig`   
-        fn timepoint() -> ProposalId { pallet_multisig::Module::<T>::timepoint().twox_256() }
+        fn timepoint() -> ProposalId {
+            Timepoint::<T::BlockNumber> {
+                height: <frame_system::Module<T>>::block_number(),
+                index: <frame_system::Module::<T>>::extrinsic_index().unwrap_or_default(),
+            }.twox_256()
+        }
         
         /// Create proposal object.
         /// Fail if input arguments violates proposal assertions (See [proposal_assertions](./module.proposal_assertions))
