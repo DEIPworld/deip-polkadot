@@ -252,7 +252,7 @@ pub mod pallet {
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::weight(10)]
-        fn propose(
+        pub fn propose(
             origin: OriginFor<T>,
             batch: Vec<ProposalBatchItemOf<T>>,
         )
@@ -285,7 +285,7 @@ pub mod pallet {
         }
 
         #[pallet::weight(10)]
-        fn decide(
+        pub fn decide(
             origin: OriginFor<T>,
             proposal_id: ProposalId,
             decision: ProposalMemberDecision,
@@ -619,8 +619,8 @@ pub mod pallet {
     /// Batch item generic container
     #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
     pub struct BatchItem<Account, CallT> {
-        account: Account,
-        call: CallT,
+        pub account: Account,
+        pub call: CallT,
     }
     
     /// Proposal member decision

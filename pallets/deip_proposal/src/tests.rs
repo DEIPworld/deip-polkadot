@@ -1,6 +1,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
 
 use crate as pallet_deip_proposal;
+use super::{*, Event as RawEvent, Call as RawCall};
 
 use sp_std::prelude::*;
 
@@ -25,7 +28,7 @@ frame_support::construct_runtime!(
 		// // Include the custom logic from the template pallet in the runtime.
 		// TemplateModule: pallet_template::{Module, Call, Storage, Event<T>},
 		// Deip: pallet_deip::{Module, Call, Storage, Event<T>, Config},
-		DeipProposal: pallet_deip_proposal::{Module, Call, Storage, Event<T>, Config},
+		Proposal: pallet_deip_proposal::{Module, Call, Storage, Event<T>, Config},
 		// Multisig: pallet_multisig::{Module, Call, Storage, Event<T>, Config},
 	}
 );
@@ -75,16 +78,103 @@ impl ExtBuilder {
     }
 }
 
+fn with_test_ext<R>(t: impl FnOnce() -> R) -> R {
+    ExtBuilder::build().execute_with(t)
+}
+
+use frame_support::{assert_noop, assert_ok};
+
+fn last_event() -> Event {
+	frame_system::Module::<TestRuntime>::events().pop().map(|e| e.event).expect("Event expected")
+}
+
+fn expect_event<E: Into<Event>>(e: E) {
+	assert_eq!(last_event(), e.into());
+}
+
 #[test]
+#[ignore]
 fn fake_test_example() {
-    ExtBuilder::build().execute_with(|| {
+    with_test_ext(|| {
         // ...test conditions...
     })
 }
 
 #[test]
-fn create_proposal() {
-    ExtBuilder::build().execute_with(|| {
-        Call::DeipProposal(crate::Call::propose(Vec::new()));
+fn decide_on_not_exist_proposal() {
+    with_test_ext(|| {
+        assert_noop!(
+            Proposal::decide(Origin::signed(1), ProposalId::default(), ProposalMemberDecision::Pending),
+            Error::<TestRuntime>::NotFound,
+        );
     })
 }
+
+#[test]
+fn create_proposal_emits_event() {
+    with_test_ext(|| {
+        System::set_block_number(1);
+        assert_ok!(Proposal::propose(Origin::signed(0), Vec::new()));
+        match last_event() {
+            self::Event::pallet_deip_proposal(
+                RawEvent::Proposed {
+                    author: _,
+                    batch: _,
+                    proposal_id: _
+                }) => {},
+            _ => { unreachable!() }
+        }
+    })
+}
+
+#[test]
+fn assert_nested_proposals_limit() {
+    with_test_ext(|| {
+        let author = 0;
+        let batch = vec![
+            ProposalBatchItemOf::<TestRuntime> {
+                account: author,
+                call: Call::Proposal(RawCall::propose(vec![
+                    ProposalBatchItemOf::<TestRuntime> {
+                        account: author,
+                        call: Call::Proposal(RawCall::propose(vec![
+                            ProposalBatchItemOf::<TestRuntime> {
+                                account: author,
+                                call: Call::Proposal(RawCall::propose(vec![])),
+                            }
+                        ])),
+                    }
+                ])),
+            }
+        ];
+        // System::set_block_number(1);
+        let origin = Origin::signed(0);
+        assert_noop!(
+            Proposal::propose(origin, batch),
+            Error::<TestRuntime>::ReachDepthLimit
+        );
+    })
+}
+
+// #[test]
+// fn create_proposal {
+//     with_test_ext(|| {
+//         assert_noop!(
+//             Proposal::decide(Origin::signed(1), ProposalId::default(), ProposalMemberDecision::Pending),
+//             Error::<TestRuntime>::NotFound,
+//         );
+//         let author = Origin::signed(0);
+//         let batch = Vec::new();
+//         System::set_block_number(1);
+//         assert_ok!(Proposal::propose(author, batch));
+//         match last_event() {
+//             self::Event::pallet_deip_proposal(
+//                 RawEvent::Proposed {
+//                     author,
+//                     batch,
+//                     proposal_id
+//                 }) => {},
+//             _ => { unreachable!() }
+//         }
+//     })
+// }
