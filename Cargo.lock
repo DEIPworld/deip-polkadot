@@ -1152,6 +1152,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "deip_protocol"
+version = "0.1.0"
+
+[[package]]
 name = "derive_more"
 version = "0.99.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3555,6 +3559,7 @@ dependencies = [
  "pallet-aura",
  "pallet-balances",
  "pallet-deip",
+ "pallet-deip-org",
  "pallet-deip-proposal",
  "pallet-grandpa",
  "pallet-multisig",
@@ -3769,6 +3774,37 @@ dependencies = [
  "frame-support",
  "frame-system",
  "pallet-timestamp",
+ "parity-scale-codec",
+ "serde",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
+name = "pallet-deip-core"
+version = "3.0.0"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "pallet-multisig",
+ "pallet-timestamp",
+ "parity-scale-codec",
+ "serde",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
+name = "pallet-deip-org"
+version = "3.0.0"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "pallet-deip-core",
  "parity-scale-codec",
  "serde",
  "sp-core",

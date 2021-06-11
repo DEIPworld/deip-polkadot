@@ -1,4 +1,10 @@
 {
+  "OrgOf": "Org",
+  "Org": {
+    "key": "AccountId",
+    "name": "OrgName"
+  },
+  "OrgName": "H160",
   "DomainId": "H160",
   "AccountInfo": {
     "nonce": "Index",
