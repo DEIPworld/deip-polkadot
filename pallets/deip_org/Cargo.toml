@@ -25,7 +25,7 @@ sp-std = { default-features = false, version = '3.0.0' }
 sp-runtime = { version = '3.0.0', default-features = false }
 sp-core = { default-features = false, version = '3.0.0' }
 serde = { version = "1.0.123", optional = true, features = ["derive"]}
-pallet-deip-core = { path = "../deip_core", default-features = false }
+pallet-deip-toolkit = { path = "../deip_toolkit", default-features = false }
 
 [dev-dependencies]
 sp-io = { default-features = false, version = '3.0.0' }
@@ -39,5 +39,5 @@ std = [
     'frame-system/std',
     'sp-std/std', 
     'serde',
-    'pallet-deip-core/std'
+    'pallet-deip-toolkit/std'
 ]

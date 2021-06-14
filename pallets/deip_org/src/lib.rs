@@ -49,7 +49,7 @@ pub mod pallet {
     use sp_runtime::traits::Dispatchable;
     use frame_support::dispatch::DispatchResult;
     
-    use pallet_deip_core::storage_ops::StorageOpsTransaction;
+    use pallet_deip_toolkit::storage_ops::StorageOpsTransaction;
 
     /// Configuration trait
     #[pallet::config]
@@ -215,7 +215,7 @@ pub mod pallet {
     /// Module contains abstractions over pallet storage operations
     pub mod storage_ops {
         use sp_std::prelude::*;
-        use pallet_deip_core::storage_ops::StorageOp;
+        use pallet_deip_toolkit::storage_ops::StorageOp;
         use super::{Config, Event, Pallet};
         use super::{OrgOf, OrgRepository};
 

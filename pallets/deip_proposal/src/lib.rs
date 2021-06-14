@@ -268,7 +268,7 @@ pub mod pallet {
                 <DeipProposal<T>>::timepoint
             )?;
 
-            StorageOpsTransaction::<T, _>::new()
+            StorageWrite::<T>::new()
                 .commit(move |ops| {
                     let author = proposal.author.clone();
                     let batch = proposal.batch.clone();
@@ -297,7 +297,7 @@ pub mod pallet {
             let author = pending.get(&proposal_id).ok_or(Error::<T>::NotFound)?;
             let proposal = ProposalStorage::<T>::get(author, &proposal_id).ok_or(Error::<T>::NotFound)?;
             let maybe_batch_exec_result: Option<DispatchResultWithPostInfo> =
-                StorageOpsTransaction::<T, _>::new()
+                StorageWrite::<T>::new()
                     .commit(|ops| {
                         proposal.decide(
                             &member,
@@ -414,12 +414,12 @@ pub mod pallet {
     #[doc(no_inline)]
     /// Module contains abstractions over pallet storage operations
     pub mod storage_ops {
-        use sp_std::collections::vec_deque::VecDeque;
-        use sp_std::marker::PhantomData;
         use sp_std::prelude::*;
-        use super::{
-            Config, DeipProposal, Event,
-            ProposalStorage, Pallet, PendingProposals};
+        use super::{Config, DeipProposal, Event, ProposalStorage, Pallet, PendingProposals};
+        
+        pub use pallet_deip_toolkit::storage_ops::*;
+        
+        pub type StorageWrite<T> = StorageOpsTransaction<StorageOps<T>>;
         
         /// Storage operations
         pub enum StorageOps<T: Config> {
@@ -432,25 +432,9 @@ pub mod pallet {
             /// Delete proposal
             DeleteProposal(DeipProposal<T>),
         }
-        
-        /// Fifo-queue for storage operations
-        pub struct StorageOpsQueue<T>(VecDeque<T>);
-        impl<T> StorageOpsQueue<T> {
-            /// Add storage operation
-            pub fn push_op(&mut self, op: T) -> &mut Self { self.0.push_back(op); self }
-            fn pop_op(&mut self) -> Option<T> { self.0.pop_front() }
-        }
-
-        /// Multi-ops storage transaction 
-        pub struct StorageOpsTransaction<T: Config, Ops=StorageOps<T>>(StorageOpsQueue<Ops>, PhantomData<T>);
-        impl<T: Config> StorageOpsTransaction<T, StorageOps<T>> {
-            /// New storage transaction
-            pub fn new() -> Self { Self(StorageOpsQueue(VecDeque::new()), Default::default()) }
-            /// Execute callable then perform storage operations provided via ops-queue
-            pub fn commit<R>(mut self, transactional: impl FnOnce(&mut StorageOpsQueue<StorageOps<T>>) -> R) -> R {
-                let result = transactional(&mut self.0);
-                while let Some(op) = self.0.pop_op() {
-                    match op {
+        impl<T: Config> StorageOp for StorageOps<T> {
+            fn exec(self) {
+                match self {
                         StorageOps::DepositEvent(event) => {
                             <Pallet<T>>::deposit_event(event);
                         },
@@ -482,12 +466,9 @@ pub mod pallet {
                             <ProposalStorage<T>>::remove(author, proposal_id);
                         },
                     }
-                }
-                result
             }
         }
     }
-
     
     /// A global extrinsic index, formed as the extrinsic index within a block, together with that
     /// block's height. This allows a transaction in which a multisig operation of a particular

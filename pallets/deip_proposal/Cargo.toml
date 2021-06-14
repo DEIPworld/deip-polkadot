@@ -26,7 +26,7 @@ sp-std = { default-features = false, version = '3.0.0' }
 sp-runtime = { version = '3.0.0', default-features = false }
 sp-core = { default-features = false, version = '3.0.0' }
 serde = { version = "1.0.123", optional = true, features = ["derive"]}
-pallet-multisig = { default-features = false, version = '3.0.0' }
+pallet-deip-toolkit = { path = "../deip_toolkit", default-features = false }
 
 [dev-dependencies]
 sp-io = { default-features = false, version = '3.0.0' }
@@ -41,5 +41,5 @@ std = [
     'sp-std/std', 
     'pallet-timestamp/std',
     'serde',
-    'pallet-multisig/std'
+    'pallet-deip-toolkit/std'
 ]

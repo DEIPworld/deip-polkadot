@@ -26,17 +26,10 @@ pub use pallet::*;
 #[doc(hidden)]
 pub mod pallet {
     use frame_system::pallet_prelude::*;
-    use frame_system::RawOrigin;
     
     use frame_support::pallet_prelude::*;
-    use frame_support::{Hashable};
     use frame_support::weights::{PostDispatchInfo, GetDispatchInfo};
-    
     use frame_support::traits::{UnfilteredDispatchable, IsSubType};
-    
-    use sp_std::prelude::*;
-    use sp_std::collections::{btree_map::BTreeMap};
-    use sp_std::iter::FromIterator;
     
     use sp_runtime::traits::Dispatchable;
     
@@ -69,7 +62,7 @@ pub mod pallet {
     
     #[pallet::event]
     #[pallet::metadata(u32 = "SpecialU32")]
-    #[pallet::generate_deposit(fn deposit_event)]
+    // #[pallet::generate_deposit(fn deposit_event)]
     pub enum Event<T: Config> {}
     
     #[doc(hidden)]

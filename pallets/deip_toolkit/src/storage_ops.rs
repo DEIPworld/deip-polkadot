@@ -3,7 +3,6 @@
 //! 
 
 use sp_std::collections::vec_deque::VecDeque;
-use sp_std::prelude::*;
 
 /// Storage operation
 pub trait StorageOp {
@@ -23,7 +22,6 @@ impl<T> StorageOpsQueue<T> {
 
 /// Multi-ops storage transaction 
 pub struct StorageOpsTransaction<Op>(StorageOpsQueue<Op>);
-
 impl<Op: StorageOp> StorageOpsTransaction<Op> {
     /// New storage transaction
     pub fn new() -> Self { Self(StorageOpsQueue(VecDeque::new())) }
