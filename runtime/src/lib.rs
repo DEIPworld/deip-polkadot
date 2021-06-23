@@ -47,6 +47,8 @@ use constants::{ currency::*};
 /// Weights for pallets used in the runtime.
 mod weights;
 
+pub mod app_tag_ext;
+
 /// Import the template pallet.
 pub use pallet_template;
 
@@ -354,7 +356,8 @@ pub type SignedExtra = (
 	frame_system::CheckEra<Runtime>,
 	frame_system::CheckNonce<Runtime>,
 	frame_system::CheckWeight<Runtime>,
-	pallet_transaction_payment::ChargeTransactionPayment<Runtime>
+	pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
+    // app_tag_ext::TagApp<Runtime>
 );
 /// Unchecked extrinsic type as expected by this runtime.
 pub type UncheckedExtrinsic = generic::UncheckedExtrinsic<Address, Call, Signature, SignedExtra>;

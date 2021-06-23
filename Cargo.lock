@@ -1098,6 +1098,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "custom-transaction"
+version = "3.0.0"
+dependencies = [
+ "frame-system",
+ "node-template-runtime",
+ "pallet-balances",
+ "pallet-deip-org",
+ "pallet-sudo",
+ "pallet-transaction-payment",
+ "parity-scale-codec",
+ "rustc-hex",
+ "sp-core",
+ "sp-runtime",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

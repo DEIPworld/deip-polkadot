@@ -5,6 +5,7 @@ incremental = true
 [workspace]
 members = [
     'node',
+    'bin/*',
     'pallets/*',
     'runtime',
 ]
