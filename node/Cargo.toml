@@ -25,6 +25,7 @@ structopt = '0.3.8'
 # local dependencies
 node-template-runtime = { path = '../runtime', version = '3.0.0' }
 pallet-deip = { path = "../pallets/deip" }
+pallet-deip-org-rpc = { path = "../pallets/deip_org_rpc" }
 deip-rpc = { path = "../pallets/deip/rpc" }
 deip-runtime-api = { path = "../pallets/deip/runtime-api" }
 

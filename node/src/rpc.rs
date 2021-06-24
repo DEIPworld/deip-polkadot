@@ -35,6 +35,7 @@ pub fn create_full<C, P>(
 	C::Api: substrate_frame_rpc_system::AccountNonceApi<Block, AccountId, Index>,
 	C::Api: pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi<Block, Balance>,
 	C::Api: deip_runtime_api::DeipApi<Block, AccountId>,
+	C::Api: pallet_deip_org_rpc::DeipOrgRuntimeApi<Block, AccountId>,
 	C::Api: BlockBuilder<Block>,
 	P: TransactionPool + 'static,
 {
@@ -58,7 +59,11 @@ pub fn create_full<C, P>(
 
 	// Add a silly RPC that returns constant values
     io.extend_with(deip_rpc::DeipStorageApi::to_delegate(
-        deip_rpc::DeipStorage::new(client),
+        deip_rpc::DeipStorage::new(client.clone()),
+    ));
+    
+    io.extend_with(pallet_deip_org_rpc::DeipOrgRpcApi::to_delegate(
+        pallet_deip_org_rpc::DeipOrgRpcApiObj::new(client),
     ));
 
 	// Extend this RPC with a custom API by using the following syntax.

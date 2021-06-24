@@ -433,6 +433,18 @@ impl_runtime_apis! {
 			Executive::offchain_worker(header)
 		}
 	}
+    
+    impl pallet_deip_org::api::DeipOrgRuntimeApi<Block, AccountId> for Runtime {
+        fn get(name: pallet_deip_org::org::OrgName) -> pallet_deip_org::api::GetResult<AccountId> {
+            DeipOrg::rpc_get(name)
+        }
+        fn get_multi(names: Vec<pallet_deip_org::org::OrgName>) -> pallet_deip_org::api::GetMultiResult<AccountId> {
+            DeipOrg::rpc_get_multi(names)
+        }
+        fn list() -> pallet_deip_org::api::ListResult<AccountId> {
+            DeipOrg::rpc_list()
+        }
+    }
 	
 	// Here we implement our custom runtime API.
 	impl deip_runtime_api::DeipApi<Block,  AccountId> for Runtime {

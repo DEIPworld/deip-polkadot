@@ -27,6 +27,8 @@
 #[cfg(test)]
 mod tests;
 
+pub mod api;
+
 #[doc(inline)]
 pub use pallet::*;
 
@@ -110,6 +112,9 @@ pub mod pallet {
         use sp_std::prelude::*;
         use frame_support::pallet_prelude::*;
         use super::{Config, OrgRepository, Error};
+        
+        #[cfg(feature = "std")]
+        use serde::{Serialize, Deserialize};
 
         #[allow(type_alias_bounds)]
         pub type OrgOf<T: Config> = Org<T::AccountId, OrgName>;
@@ -128,6 +133,7 @@ pub mod pallet {
         }
         
         #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
+        #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
         pub struct Org<AccountId, Name> {
             key: AccountId,
             name: Name
@@ -202,7 +208,7 @@ pub mod pallet {
     // ==== Storage ====:
     
     #[pallet::storage]
-    #[pallet::getter(fn get_dao)]
+    #[pallet::getter(fn get_org)]
     pub(super) type OrgRepository<T: Config> = StorageMap<_,
         Blake2_128Concat,
         OrgName,

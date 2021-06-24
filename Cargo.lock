@@ -3528,6 +3528,7 @@ dependencies = [
  "jsonrpc-core",
  "node-template-runtime",
  "pallet-deip",
+ "pallet-deip-org-rpc",
  "pallet-transaction-payment-rpc",
  "sc-basic-authorship",
  "sc-cli",
@@ -3803,6 +3804,25 @@ dependencies = [
  "pallet-deip-toolkit",
  "parity-scale-codec",
  "serde",
+ "sp-api",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
+name = "pallet-deip-org-rpc"
+version = "3.0.0"
+dependencies = [
+ "jsonrpc-core",
+ "jsonrpc-core-client",
+ "jsonrpc-derive",
+ "pallet-deip-org",
+ "parity-scale-codec",
+ "serde",
+ "sp-api",
+ "sp-blockchain",
  "sp-core",
  "sp-io",
  "sp-runtime",
