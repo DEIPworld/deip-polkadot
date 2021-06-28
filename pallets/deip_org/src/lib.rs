@@ -85,6 +85,8 @@ pub mod pallet {
         NotFound,
         /// Access denied
         Forbidden,
+        ///
+        KeySourceMismatch
     }
     
     #[pallet::event]
@@ -134,13 +136,67 @@ pub mod pallet {
         
         #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
         #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+        pub struct KeySource<AccountId> {
+            signatories: Vec<AccountId>,
+            threshold: u16 
+        }
+        #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
+        pub struct InputKeySource<AccountId> {
+            pub signatories: Vec<AccountId>,
+            pub threshold: u16 
+        }
+        pub enum KeySourceAssert {
+            EmptySignatories,
+            /// We expect signatures list with exactly one element for plain account
+            PlainAccountExpect,
+            ThresholdMismatch,
+            OriginMismatch,
+        }
+        impl<T: Config> From<KeySourceAssert> for Error<T> {
+            fn from(source: KeySourceAssert) -> Self {
+                Error::<T>::KeySourceMismatch
+            }
+        }
+        pub trait AssertKeySource<T: Config> {
+            fn assert(self, origin: &T::AccountId) -> Result<KeySource<T::AccountId>, KeySourceAssert>;
+        }
+        pub fn multi_account_id<T: Config>(who: &[T::AccountId], threshold: u16) -> T::AccountId {
+            let entropy = (b"modlpy/utilisuba", who, threshold).using_encoded(sp_io::hashing::blake2_256);
+            T::AccountId::decode(&mut &entropy[..]).unwrap_or_default()
+        }
+        impl<T: Config> AssertKeySource<T> for InputKeySource<T::AccountId> {
+            fn assert(self, origin: &T::AccountId) -> Result<KeySource<T::AccountId>, KeySourceAssert>
+            {
+                let Self { mut signatories, threshold } = self;
+                ensure!(!signatories.is_empty(), KeySourceAssert::EmptySignatories);
+                
+                // zero threshold adjusts plain non-multisig account
+                let key = if threshold == 0 {
+                    ensure!(signatories.len() == 1, KeySourceAssert::PlainAccountExpect);
+                    signatories.get(0).unwrap().clone()
+                } else {
+                    ensure!(threshold as usize <= signatories.len(), KeySourceAssert::ThresholdMismatch);
+                    signatories.sort();
+                    multi_account_id::<T>(signatories.as_slice(), threshold)
+                };
+                if origin == &key {
+                    Ok(KeySource { signatories, threshold })
+                } else {
+                    Err(KeySourceAssert::OriginMismatch)
+                }
+            }
+        }
+        
+        #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
+        #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
         pub struct Org<AccountId, Name> {
             key: AccountId,
+            key_source: KeySource<AccountId>,
             name: Name
         }
         impl<AccountId, Name> Org<AccountId, Name> {
-            pub fn new(key: AccountId, name: Name) -> Self {
-                Self { key, name }
+            pub fn new(key: AccountId, key_source: KeySource<AccountId>, name: Name) -> Self {
+                Self { key, key_source, name }
             }
         }
         impl<AccountId, Name> Org<AccountId, Name> {
@@ -148,8 +204,9 @@ pub mod pallet {
             pub fn name(&self) -> &Name { &self.name }
         }
         impl<AccountId, Name> Org<AccountId, Name> {
-            pub fn update_key(&mut self, key: AccountId) {
+            pub fn update_key(&mut self, key: AccountId, source: KeySource<AccountId>) {
                 self.key = key;
+                self.key_source = source;
             }
         }
     }
@@ -161,14 +218,24 @@ pub mod pallet {
         pub fn create(
             origin: OriginFor<T>,
             name: OrgName,
-        ) -> DispatchResultWithPostInfo
+            key_source: InputKeySource<T::AccountId>,
+        )
+            -> DispatchResultWithPostInfo
+            where KeySourceAssert: Into<Error<T>>,
+                  InputKeySource<T::AccountId>: AssertKeySource<T> 
         {
             let who = ensure_signed(origin)?;
+            let key_source = key_source.assert(&who)
+                .map_err(|x| x.into())?;
             ensure!(!OrgRepository::<T>::contains_key(&name), Error::<T>::Exists);
-            let org = Org::new(who, name);
+            let org = Org::new(
+                who,
+                key_source,
+                name
+            );
             StorageOpsTransaction::<StorageOps<T>>::new()
                 .commit(move |ops| {
-                    ops.push_op(StorageOps::CreateDao(org.clone()));
+                    ops.push_op(StorageOps::CreateOrg(org.clone()));
                     ops.push_op(StorageOps::DepositEvent(Event::<T>::OrgCreate(org)));
                 });
             Ok(Some(0).into())
@@ -179,14 +246,20 @@ pub mod pallet {
             origin: OriginFor<T>,
             name: OrgName,
             transfer_to: T::AccountId,
-        ) -> DispatchResultWithPostInfo
+            key_source: InputKeySource<T::AccountId>,
+        )
+            -> DispatchResultWithPostInfo
+            where InputKeySource<T::AccountId>: AssertKeySource<T>,
+                  KeySourceAssert: Into<Error<T>>
         {
             let who = ensure_signed(origin)?;
             let mut org = load_org::<T>(&name, &who)?;
-            org.update_key(transfer_to);
+            let key_source = key_source.assert(&transfer_to)
+                .map_err(|x| x.into())?;
+            org.update_key(transfer_to, key_source);
             StorageOpsTransaction::<StorageOps<T>>::new()
                 .commit(move |ops| {
-                    ops.push_op(StorageOps::UpdateDao(org.clone()));
+                    ops.push_op(StorageOps::UpdateOrg(org.clone()));
                     ops.push_op(StorageOps::DepositEvent(Event::<T>::OrgTransferOwnership(org)));
                 });
             Ok(Some(0).into())
@@ -230,8 +303,8 @@ pub mod pallet {
             /// Deposit event
             DepositEvent(Event<T>),
             /// Create proposal
-            CreateDao(OrgOf<T>),
-            UpdateDao(OrgOf<T>),
+            CreateOrg(OrgOf<T>),
+            UpdateOrg(OrgOf<T>),
             
         }
         impl<T: Config> StorageOp for StorageOps<T> {
@@ -240,8 +313,8 @@ pub mod pallet {
                     Self::DepositEvent(e) => {
                         Pallet::<T>::deposit_event(e)
                     },
-                    Self::CreateDao(dao) |
-                    Self::UpdateDao(dao) => {
+                    Self::CreateOrg(dao) |
+                    Self::UpdateOrg(dao) => {
                         OrgRepository::<T>::insert(*dao.name(), dao);
                     }
                 }

@@ -2,7 +2,6 @@ use jsonrpc_core::{Error as RpcError, ErrorCode as RpcErrorCode, Result as RpcRe
 use jsonrpc_derive::rpc;
 
 use std::vec::Vec;
-use std::prelude::*;
 use std::sync::Arc;
 
 use codec::Codec;
@@ -12,7 +11,7 @@ use sp_runtime::{generic::BlockId, traits::Block as BlockT};
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
 
-use pallet_deip_org::org::{OrgName, Org};
+use pallet_deip_org::org::{OrgName};
 use pallet_deip_org::api::{GetResult, GetMultiResult, ListResult};
 pub use pallet_deip_org::api::{DeipOrgRuntimeApi};
 

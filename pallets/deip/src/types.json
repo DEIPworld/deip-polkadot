@@ -1,7 +1,13 @@
 {
+  "InputKeySource": "KeySource",
+  "KeySource": {
+    "signatories": "Vec<AccountId>",
+    "threshold": "u16"
+  },
   "OrgOf": "Org",
   "Org": {
     "key": "AccountId",
+    "key_source": "KeySource",
     "name": "OrgName"
   },
   "OrgName": "H160",

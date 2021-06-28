@@ -12,7 +12,7 @@ use codec::Encode;
 use node_template_runtime::app_tag_ext::{TagApp, AppTag};
 use node_template_runtime::{Runtime, Call, Address, AccountId, Signature, Hash};
 
-use pallet_deip_org::{Call as DeipOrgCall, org::OrgName};
+use pallet_deip_org::{Call as DeipOrgCall, org::{OrgName, InputKeySource}};
 
 use sp_core::crypto::{Ss58Codec, Pair, AccountId32};
 use sp_core::ed25519;
@@ -45,8 +45,6 @@ fn genesis_hash() -> Hash {
 fn main() {
     let name = OrgName::from_slice("test_org\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes());
     
-    let function = Call::DeipOrg(DeipOrgCall::create(name));
-    
     let tag = AppTag::from_slice("test_tag\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes());
     
     let extra = (
@@ -63,8 +61,14 @@ fn main() {
     let (pair, _) = ed25519::Pair::generate();
     println!("{}", pair.public());
     
-    let account = MultiSigner::from(pair.public());
-    let signed = Address::from(account.into_account());
+    let account = MultiSigner::from(pair.public()).into_account();
+    
+    let function = Call::DeipOrg(DeipOrgCall::create(
+        name,
+        InputKeySource { signatories: vec![account.clone()], threshold: 0 }
+    ));
+    
+    let signed = Address::from(account);
     
     let raw_payload = SignedPayload::new(function, extra).unwrap();
     let signature = raw_payload.using_encoded(|x| pair.sign(x));

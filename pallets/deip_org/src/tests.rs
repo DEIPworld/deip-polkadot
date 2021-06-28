@@ -83,6 +83,10 @@ fn expect_event<E: Into<Event>>(e: E) {
 	assert_eq!(last_event(), e.into());
 }
 
+fn plain_key_source(who: u64) -> InputKeySource<u64> {
+    InputKeySource { signatories: vec![who], threshold: 0 }
+}
+
 #[test]
 #[ignore]
 fn fake_test_example() {
@@ -97,7 +101,7 @@ fn org_create() {
         System::set_block_number(1);
         let who = 1;
         let name = OrgName::from_slice("test_org\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes());
-        assert_ok!(DeipOrg::create(Origin::signed(who), name));
+        assert_ok!(DeipOrg::create(Origin::signed(who), name, plain_key_source(who)));
         assert!(matches!(
             last_event(),
             Event::pallet_deip_org(RawEvent::OrgCreate(org))
@@ -111,9 +115,9 @@ fn org_create_exists() {
     with_test_ext(|| {
         let who = 1;
         let name = OrgName::from_slice("test_org\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes());
-        DeipOrg::create(Origin::signed(who), name).expect("create OK");
+        DeipOrg::create(Origin::signed(who), name, plain_key_source(who)).expect("create OK");
         assert_noop!(
-            DeipOrg::create(Origin::signed(who), name),
+            DeipOrg::create(Origin::signed(who), name, plain_key_source(who)),
             Error::<TestRuntime>::Exists,
         );
     })
@@ -125,9 +129,9 @@ fn org_transfer_ownership() {
         System::set_block_number(1);
         let who = 1;
         let name = OrgName::from_slice("test_org\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes());
-        DeipOrg::create(Origin::signed(who), name).expect("create OK");
+        DeipOrg::create(Origin::signed(who), name, plain_key_source(who)).expect("create OK");
         let transfer_to = 2;
-        assert_ok!(DeipOrg::transfer_ownership(Origin::signed(who), name, transfer_to));
+        assert_ok!(DeipOrg::transfer_ownership(Origin::signed(who), name, transfer_to, plain_key_source(transfer_to)));
         assert!(matches!(
             last_event(),
             Event::pallet_deip_org(RawEvent::OrgTransferOwnership(org))
@@ -144,7 +148,7 @@ fn org_transfer_ownership_not_found() {
         let name = OrgName::from_slice("test_org\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes());
         let transfer_to = 2;
         assert_noop!(
-            DeipOrg::transfer_ownership(Origin::signed(who), name, transfer_to),
+            DeipOrg::transfer_ownership(Origin::signed(who), name, transfer_to, plain_key_source(who)),
             Error::<TestRuntime>::NotFound,
         );
     })
@@ -156,15 +160,15 @@ fn org_transfer_ownership_forbidden() {
         System::set_block_number(1);
         let owner = 1;
         let name = OrgName::from_slice("test_org\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes());
-        DeipOrg::create(Origin::signed(owner), name).expect("create OK");
+        DeipOrg::create(Origin::signed(owner), name, plain_key_source(owner)).expect("create OK");
         let transfer_to = 2;
         let other = 3;
         assert_noop!(
-            DeipOrg::transfer_ownership(Origin::signed(transfer_to), name, transfer_to),
+            DeipOrg::transfer_ownership(Origin::signed(transfer_to), name, transfer_to, plain_key_source(transfer_to)),
             Error::<TestRuntime>::Forbidden,
         );
         assert_noop!(
-            DeipOrg::transfer_ownership(Origin::signed(other), name, transfer_to),
+            DeipOrg::transfer_ownership(Origin::signed(other), name, transfer_to, plain_key_source(transfer_to)),
             Error::<TestRuntime>::Forbidden,
         );
     })
@@ -176,13 +180,21 @@ fn org_on_behalf() {
         System::set_block_number(1);
         let who = 1;
         let name = OrgName::from_slice("test_org\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes());
-        DeipOrg::create(Origin::signed(who), name).expect("create OK");
+        DeipOrg::create(
+            Origin::signed(who),
+            name,
+            plain_key_source(who)
+        ).expect("create OK");
         let transfer_to = 2;
         assert_ok!(
             DeipOrg::on_behalf(
                 Origin::signed(who),
                 name,
-                Box::new(Call::DeipOrg(RawCall::transfer_ownership(name, transfer_to)))
+                Box::new(Call::DeipOrg(RawCall::transfer_ownership(
+                    name,
+                    transfer_to,
+                    plain_key_source(transfer_to)
+                )))
             )
         );
     })
@@ -199,7 +211,11 @@ fn org_on_behalf_not_found() {
             DeipOrg::on_behalf(
                 Origin::signed(who),
                 name,
-                Box::new(Call::DeipOrg(RawCall::transfer_ownership(name, transfer_to)))
+                Box::new(Call::DeipOrg(RawCall::transfer_ownership(
+                    name,
+                    transfer_to,
+                    plain_key_source(transfer_to)
+                )))
             ),
             Error::<TestRuntime>::NotFound,
         );
@@ -212,13 +228,21 @@ fn org_on_behalf_forbidden() {
         System::set_block_number(1);
         let who = 1;
         let name = OrgName::from_slice("test_org\0\0\0\0\0\0\0\0\0\0\0\0".as_bytes());
-        DeipOrg::create(Origin::signed(who), name).expect("create OK");
+        DeipOrg::create(
+            Origin::signed(who),
+            name,
+            plain_key_source(who)
+        ).expect("create OK");
         let transfer_to = 2;
         assert_noop!(
             DeipOrg::on_behalf(
                 Origin::signed(transfer_to),
                 name,
-                Box::new(Call::DeipOrg(RawCall::transfer_ownership(name, transfer_to)))
+                Box::new(Call::DeipOrg(RawCall::transfer_ownership(
+                    name,
+                    transfer_to,
+                    plain_key_source(transfer_to)
+                )))
             ),
             Error::<TestRuntime>::Forbidden,
         );
