@@ -48,8 +48,11 @@ pub mod pallet {
     use sp_std::collections::{btree_map::BTreeMap};
     use sp_std::iter::FromIterator;
     
-    use sp_runtime::traits::Dispatchable;
+    use sp_runtime::{MultiSigner, traits::{Dispatchable, IdentifyAccount}};
     use frame_support::dispatch::DispatchResult;
+    
+    // use sp_core::crypto::Pair;
+    // use sp_core::ed25519;
     
     use pallet_deip_toolkit::storage_ops::StorageOpsTransaction;
 
@@ -113,24 +116,66 @@ pub mod pallet {
     pub mod org {
         use sp_std::prelude::*;
         use frame_support::pallet_prelude::*;
-        use super::{Config, OrgRepository, Error};
+        use super::{Config, OrgRepository, Error, OrgLookup};
         
         #[cfg(feature = "std")]
         use serde::{Serialize, Deserialize};
+        use frame_system::Key;
+        use crate::Error::KeySourceMismatch;
 
         #[allow(type_alias_bounds)]
         pub type OrgOf<T: Config> = Org<T::AccountId, OrgName>;
         pub type OrgName = sp_core::H160;
         
+        pub enum KeyType<'a, K> {
+            Members(&'a K),
+            Own(&'a K)
+        }
+        impl<'a, K> KeyType<'a, K> {
+            pub fn members(k: &'a K) -> Self { Self::Members(k) }
+            pub fn own(k: &'a K) -> Self { Self::Own(k) }
+        }
+        pub trait MatchKey<T: Config> {
+            fn match_key(&self, org: &OrgOf<T>) -> bool;
+        }
+        impl<T: Config> MatchKey<T> for KeyType<'_, T::AccountId> {
+            fn match_key(&self, org: &OrgOf<T>) -> bool {
+                match self {
+                    Self::Members(k) => {
+                        *k == org.key()
+                    },
+                    Self::Own(k) => {
+                        *k == org.org_key()
+                    },
+                }
+            }
+        }
+        
+        pub enum LoadBy<'a, AccountId> {
+            Name { name: &'a OrgName, who: KeyType<'a, AccountId> },
+            OrgKey { org_key: &'a AccountId }
+        }
+        
         pub fn load_org<T: Config>(
-            name: &OrgName,
-            who: &T::AccountId,
+            q: LoadBy<'_, T::AccountId>,
         )
             -> Result<OrgOf<T>, Error<T>>
         {
-            let org = OrgRepository::<T>::get(name)
-                .ok_or(Error::<T>::NotFound)?;
-            ensure!(who == org.key(), Error::<T>::Forbidden);
+            let (org, who) = match q {
+                LoadBy::Name { name, who } => {
+                    let org = OrgRepository::<T>::get(name)
+                        .ok_or(Error::<T>::NotFound)?;
+                    (org, who)
+                },
+                LoadBy::OrgKey { org_key } => {
+                    let name = OrgLookup::<T>::get(org_key)
+                        .ok_or(Error::<T>::NotFound)?;
+                    let org = OrgRepository::<T>::get(&name)
+                        .ok_or(Error::<T>::NotFound)?;
+                    (org, KeyType::Own(org_key))
+                },
+            };
+            ensure!(MatchKey::<T>::match_key(&who, &org), Error::<T>::Forbidden);
             Ok(org)
         }
         
@@ -190,24 +235,48 @@ pub mod pallet {
         #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
         #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
         pub struct Org<AccountId, Name> {
-            key: AccountId,
-            key_source: KeySource<AccountId>,
-            name: Name
+            /// Members aka "control" key. Not fixed, may changes in future
+            members_key: AccountId,
+            /// Details of control key: multi-sig or plain account
+            members_key_source: KeySource<AccountId>,
+            /// Unique organisation name aka ID
+            name: Name,
+            /// Own key of organization for keeping assets,
+            /// to signing of an extrinsics calls dispatched on behalf of organization etc ..
+            /// Must be generated internally when organisation will be created,
+            /// nobody knows private half of this key
+            org_key: AccountId
         }
         impl<AccountId, Name> Org<AccountId, Name> {
-            pub fn new(key: AccountId, key_source: KeySource<AccountId>, name: Name) -> Self {
-                Self { key, key_source, name }
+            pub fn new(
+                members_key: AccountId,
+                members_key_source: KeySource<AccountId>,
+                name: Name,
+                org_key: AccountId,
+            )
+                -> Self
+            {
+                Self { members_key, members_key_source, name, org_key }
             }
         }
         impl<AccountId, Name> Org<AccountId, Name> {
-            pub fn key(&self) -> &AccountId { &self.key }
+            pub fn key(&self) -> &AccountId { &self.members_key }
+            pub fn key_source(&self) -> &KeySource<AccountId>{ &self.members_key_source }
             pub fn name(&self) -> &Name { &self.name }
+            pub fn org_key(&self) -> &AccountId { &self.org_key }
         }
         impl<AccountId, Name> Org<AccountId, Name> {
-            pub fn update_key(&mut self, key: AccountId, source: KeySource<AccountId>) {
-                self.key = key;
-                self.key_source = source;
+            pub fn update_members_key(&mut self, members_key: AccountId, source: KeySource<AccountId>) {
+                self.members_key = members_key;
+                self.members_key_source = source;
             }
+        }
+    }
+    
+    impl<T: Config> Pallet<T> {
+        fn org_key(org_name: &OrgName) -> T::AccountId {
+            let entropy = (org_name.as_bytes()).using_encoded(sp_io::hashing::blake2_256);
+            T::AccountId::decode(&mut &entropy[..]).unwrap_or_default()
         }
     }
     
@@ -222,16 +291,18 @@ pub mod pallet {
         )
             -> DispatchResultWithPostInfo
             where KeySourceAssert: Into<Error<T>>,
-                  InputKeySource<T::AccountId>: AssertKeySource<T> 
+                  InputKeySource<T::AccountId>: AssertKeySource<T>,
         {
             let who = ensure_signed(origin)?;
             let key_source = key_source.assert(&who)
                 .map_err(|x| x.into())?;
             ensure!(!OrgRepository::<T>::contains_key(&name), Error::<T>::Exists);
-            let org = Org::new(
+            let org_key = Self::org_key(&name);
+            let org = OrgOf::<T>::new(
                 who,
                 key_source,
-                name
+                name,
+                org_key
             );
             StorageOpsTransaction::<StorageOps<T>>::new()
                 .commit(move |ops| {
@@ -244,7 +315,6 @@ pub mod pallet {
         #[pallet::weight(10_000)]
         pub fn transfer_ownership(
             origin: OriginFor<T>,
-            name: OrgName,
             transfer_to: T::AccountId,
             key_source: InputKeySource<T::AccountId>,
         )
@@ -253,10 +323,10 @@ pub mod pallet {
                   KeySourceAssert: Into<Error<T>>
         {
             let who = ensure_signed(origin)?;
-            let mut org = load_org::<T>(&name, &who)?;
+            let mut org = load_org::<T>(LoadBy::OrgKey { org_key: &who })?;
             let key_source = key_source.assert(&transfer_to)
                 .map_err(|x| x.into())?;
-            org.update_key(transfer_to, key_source);
+            org.update_members_key(transfer_to, key_source);
             StorageOpsTransaction::<StorageOps<T>>::new()
                 .commit(move |ops| {
                     ops.push_op(StorageOps::UpdateOrg(org.clone()));
@@ -273,8 +343,11 @@ pub mod pallet {
         ) -> DispatchResultWithPostInfo
         {
             let who = ensure_signed(origin)?;
-            let _ = load_org::<T>(&name, &who)?;
-            call.dispatch(RawOrigin::Signed(who).into())
+            let org = load_org::<T>(LoadBy::Name {
+                name: &name,
+                who: KeyType::Members(&who)
+            })?;
+            call.dispatch(RawOrigin::Signed(org.org_key().clone()).into())
         }
     }
     
@@ -289,6 +362,15 @@ pub mod pallet {
         OptionQuery
     >;
     
+    #[pallet::storage]
+    #[pallet::getter(fn lookup_org)]
+    pub(super) type OrgLookup<T: Config> = StorageMap<_,
+        Blake2_128Concat,
+        T::AccountId,
+        OrgName,
+        OptionQuery
+    >;
+    
     use storage_ops::*;
     #[doc(no_inline)]
     /// Module contains abstractions over pallet storage operations
@@ -296,14 +378,15 @@ pub mod pallet {
         use sp_std::prelude::*;
         use pallet_deip_toolkit::storage_ops::StorageOp;
         use super::{Config, Event, Pallet};
-        use super::{OrgOf, OrgRepository};
+        use super::{OrgOf, OrgRepository, OrgLookup};
 
         /// Storage operations
         pub enum StorageOps<T: Config> {
             /// Deposit event
             DepositEvent(Event<T>),
-            /// Create proposal
+            /// Create org
             CreateOrg(OrgOf<T>),
+            /// Update org
             UpdateOrg(OrgOf<T>),
             
         }
@@ -313,9 +396,12 @@ pub mod pallet {
                     Self::DepositEvent(e) => {
                         Pallet::<T>::deposit_event(e)
                     },
-                    Self::CreateOrg(dao) |
-                    Self::UpdateOrg(dao) => {
-                        OrgRepository::<T>::insert(*dao.name(), dao);
+                    Self::CreateOrg(org) => {
+                        OrgLookup::<T>::insert(org.org_key().clone(), org.name().clone());
+                        OrgRepository::<T>::insert(*org.name(), org);
+                    }
+                    Self::UpdateOrg(org) => {
+                        OrgRepository::<T>::insert(*org.name(), org);
                     }
                 }
             }

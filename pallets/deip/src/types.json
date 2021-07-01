@@ -6,9 +6,10 @@
   },
   "OrgOf": "Org",
   "Org": {
-    "key": "AccountId",
-    "key_source": "KeySource",
-    "name": "OrgName"
+    "members_key": "AccountId",
+    "members_key_source": "KeySource",
+    "name": "OrgName",
+    "org_key": "AccountId"
   },
   "OrgName": "H160",
   "DomainId": "H160",
