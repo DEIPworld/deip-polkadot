@@ -13,6 +13,7 @@
   },
   "OrgName": "H160",
   "DomainId": "H160",
+  "ReviewId": "H160",
   "AccountInfo": {
     "nonce": "Index",
     "consumers": "RefCount",
@@ -23,6 +24,7 @@
     "account": "AccountId",
     "call": "Call"
   },
+  "ProposalBatch": "Vec<ProposalBatchItemOf>",
   "ProposalId": "[u8; 32]",
   "PendingProposalsMap": "BTreeMap<ProposalId,AccountId>",
   "DeipProposal": {
