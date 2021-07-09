@@ -46,6 +46,7 @@ pub mod pallet {
     use sp_std::prelude::*;
     use sp_std::collections::{btree_map::BTreeMap};
     use sp_std::iter::FromIterator;
+    use sp_std::borrow::Borrow;
     
     use sp_runtime::traits::Dispatchable;
     
@@ -185,7 +186,7 @@ pub mod pallet {
             /// Classify proposal batch item
             pub fn kind(item: &'a ProposalBatchItemOf<T>) -> BatchItemKind<'a, T> {
                 match item.call.is_sub_type() {
-                    Some(Call::propose(batch)) => {
+                    Some(Call::propose(batch, _)) => {
                         Self::Propose(batch)
                     },
                     Some(Call::decide(proposal_id, _decision)) => {
@@ -255,6 +256,7 @@ pub mod pallet {
         pub fn propose(
             origin: OriginFor<T>,
             batch: Vec<ProposalBatchItemOf<T>>,
+            external_id: Option<ProposalId>
         )
             -> DispatchResultWithPostInfo
         {
@@ -264,8 +266,12 @@ pub mod pallet {
             
             let proposal = DeipProposal::<T>::create(
                 batch,
-                author,
-                <DeipProposal<T>>::timepoint
+                author.clone(),
+                move || {
+                    let id = external_id.unwrap_or_else(<DeipProposal<T>>::timepoint);
+                    ensure!(!ProposalStorage::<T>::contains_key(author, &id), Error::<T>::AlreadyExist);
+                    Ok(id)
+                }
             )?;
 
             StorageWrite::<T>::new()
@@ -368,7 +374,7 @@ pub mod pallet {
     
     // ==== Logic ====:
 
-    pub type ProposalId = [u8; 32];
+    pub type ProposalId = sp_core::H160;
     #[allow(type_alias_bounds)]
     pub type PendingProposalsMap<T: Config> = BTreeMap<ProposalId, T::AccountId>;
     
@@ -485,10 +491,11 @@ pub mod pallet {
         /// Generate "Timepoint" aka unique proposal ID.
         /// Implemented as hash-value of Timepoint from `pallet_multisig`   
         fn timepoint() -> ProposalId {
-            Timepoint::<T::BlockNumber> {
+            let timepoint = Timepoint::<T::BlockNumber> {
                 height: <frame_system::Module<T>>::block_number(),
                 index: <frame_system::Module::<T>>::extrinsic_index().unwrap_or_default(),
-            }.twox_256()
+            }.twox_256();
+            ProposalId::from_slice(&timepoint[..20])
         }
         
         /// Create proposal object.
@@ -496,7 +503,7 @@ pub mod pallet {
         fn create(
             batch: Vec<ProposalBatchItemOf<T>>,
             author: T::AccountId,
-            timepoint: impl FnOnce() -> ProposalId
+            id: impl FnOnce() -> Result<ProposalId, Error<T>>
         )
             -> Result<Self, Error<T>>
         {
@@ -507,7 +514,7 @@ pub mod pallet {
                 ))
             );
             let proposal = Self {
-                id: timepoint(),
+                id: id()?,
                 batch,
                 decisions,
                 state: ProposalState::Pending,

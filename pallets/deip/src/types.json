@@ -25,7 +25,7 @@
     "call": "Call"
   },
   "ProposalBatch": "Vec<ProposalBatchItemOf>",
-  "ProposalId": "[u8; 32]",
+  "ProposalId": "H160",
   "PendingProposalsMap": "BTreeMap<ProposalId,AccountId>",
   "DeipProposal": {
     "id": "ProposalId",
