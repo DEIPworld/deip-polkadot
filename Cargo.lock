@@ -3573,6 +3573,7 @@ dependencies = [
  "pallet-balances",
  "pallet-deip",
  "pallet-deip-org",
+ "pallet-deip-org-proposal",
  "pallet-deip-proposal",
  "pallet-grandpa",
  "pallet-multisig",
@@ -3807,6 +3808,20 @@ dependencies = [
  "sp-api",
  "sp-core",
  "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
+name = "pallet-deip-org-proposal"
+version = "3.0.0"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "pallet-deip-org",
+ "pallet-deip-proposal",
+ "parity-scale-codec",
+ "serde",
  "sp-runtime",
  "sp-std",
 ]

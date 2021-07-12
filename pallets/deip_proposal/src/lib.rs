@@ -31,6 +31,9 @@ mod tests;
 #[doc(inline)]
 pub use pallet::*;
 
+/// Re-exports deip-toolkit
+pub use pallet_deip_toolkit;
+
 #[frame_support::pallet]
 #[doc(hidden)]
 pub mod pallet {
@@ -46,7 +49,6 @@ pub mod pallet {
     use sp_std::prelude::*;
     use sp_std::collections::{btree_map::BTreeMap};
     use sp_std::iter::FromIterator;
-    use sp_std::borrow::Borrow;
     
     use sp_runtime::traits::Dispatchable;
     
@@ -250,6 +252,32 @@ pub mod pallet {
         }
     }
     
+    /// Pallet's business-logic public interface
+    #[doc(no_inline)]
+    pub mod entrypoint {
+        use super::{Config, Error};
+        use super::{StorageWrite, DeipProposal, ProposalBatch, ProposalId};
+        
+        /// Create proposal
+        pub fn propose<T: Config>(
+            author: T::AccountId,
+            batch: ProposalBatch<T>,
+            external_id: Option<ProposalId>
+        )
+            -> Result<(), Error<T>> 
+        {
+            StorageWrite::<T>::new()
+                .commit(move |ops| {
+                    DeipProposal::<T>::create(
+                        batch,
+                        author,
+                        external_id,
+                        ops
+                    )
+                })
+        }
+    }
+    
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::weight(10)]
@@ -262,30 +290,9 @@ pub mod pallet {
         {
             let author = ensure_signed(origin)?;
             
-            frame_support::debug::RuntimeLogger::init();
-            
-            let proposal = DeipProposal::<T>::create(
-                batch,
-                author.clone(),
-                move || {
-                    let id = external_id.unwrap_or_else(<DeipProposal<T>>::timepoint);
-                    ensure!(!ProposalStorage::<T>::contains_key(author, &id), Error::<T>::AlreadyExist);
-                    Ok(id)
-                }
-            )?;
+            // frame_support::debug::RuntimeLogger::init();
 
-            StorageWrite::<T>::new()
-                .commit(move |ops| {
-                    let author = proposal.author.clone();
-                    let batch = proposal.batch.clone();
-                    let proposal_id = proposal.id;
-                    ops.push_op(StorageOps::CreateProposal(proposal));
-                    ops.push_op(StorageOps::DepositEvent(Event::<T>::Proposed {
-                        author,
-                        batch,
-                        proposal_id
-                    }));
-                });
+            entrypoint::propose::<T>(author, batch, external_id)?;
             
             Ok(Some(0).into())
         }
@@ -500,12 +507,13 @@ pub mod pallet {
         
         /// Create proposal object.
         /// Fail if input arguments violates proposal assertions (See [proposal_assertions](./module.proposal_assertions))
-        fn create(
+        pub fn create(
             batch: Vec<ProposalBatchItemOf<T>>,
             author: T::AccountId,
-            id: impl FnOnce() -> Result<ProposalId, Error<T>>
+            external_id: Option<ProposalId>,
+            storage_ops: &mut StorageOpsQueue<StorageOps<T>>
         )
-            -> Result<Self, Error<T>>
+            -> Result<(), Error<T>>
         {
             let decisions = BTreeMap::from_iter(
                 batch.iter().map(|x| (
@@ -514,25 +522,36 @@ pub mod pallet {
                 ))
             );
             let proposal = Self {
-                id: id()?,
+                id: external_id.unwrap_or_else(Self::timepoint),
                 batch,
                 decisions,
                 state: ProposalState::Pending,
                 author
             };
+            ensure!(
+                !ProposalStorage::<T>::contains_key(&proposal.author, &proposal.id),
+                Error::<T>::AlreadyExist
+            );
             match assert_proposal(&proposal, 2) {
                 Some(ProposalAssertions::DepthLimit) => {
-                    Err(Error::<T>::ReachDepthLimit)
+                    return Err(Error::<T>::ReachDepthLimit)
                 },
                 Some(ProposalAssertions::SelfReference) => {
-                    Err(Error::<T>::SelfReferential)
+                    return Err(Error::<T>::SelfReferential)
                 },
-                None => Ok(proposal),
+                None => (),
             }
+            storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Proposed {
+                author: proposal.author.clone(),
+                batch: proposal.batch.clone(),
+                proposal_id: proposal.id,
+            }));
+            storage_ops.push_op(StorageOps::CreateProposal(proposal));
+            Ok(())
         }
         
         /// 
-        fn decide<BatchExec>(
+        pub fn decide<BatchExec>(
             mut self,
             member: &T::AccountId,
             decision: ProposalMemberDecision,

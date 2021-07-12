@@ -1,4 +1,14 @@
 {
+  "OrgProposalBatchItem": {
+    "account": "OrgProposalAccount",
+    "call": "Call"
+  },
+  "OrgProposalAccount": {
+    "_enum": {
+      "Native": "AccountId",
+      "Org": "OrgName"
+    }
+  },
   "InputKeySource": "KeySource",
   "KeySource": {
     "signatories": "Vec<AccountId>",

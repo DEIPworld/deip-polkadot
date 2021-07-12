@@ -3,7 +3,7 @@ use std::{str::FromStr};
 use node_template_runtime::{
 	AccountId, AuraConfig, BalancesConfig, GenesisConfig, GrandpaConfig,
 	SudoConfig, SystemConfig, WASM_BINARY, Signature, DeipConfig, DeipProposalConfig,
-    DeipOrgConfig
+    DeipOrgConfig, DeipOrgProposalConfig
 };
 use pallet_deip::{ DomainId, Domain };
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
@@ -175,6 +175,8 @@ fn testnet_genesis(
             // _myfield: Default::default()
         }),
         pallet_deip_org: Some(DeipOrgConfig {
+        }),
+        pallet_deip_org_proposal: Some(DeipOrgProposalConfig {
         }),
 		pallet_aura: Some(AuraConfig {
 			authorities: initial_authorities.iter().map(|x| (x.0.clone())).collect(),

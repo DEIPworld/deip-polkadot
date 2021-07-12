@@ -288,6 +288,8 @@ impl pallet_deip_org::Config for Runtime {
     type Call = Call;
 }
 
+impl pallet_deip_org_proposal::Config for Runtime {}
+
 impl pallet_utility::Config for Runtime {
 	type Event = Event;
 	type Call = Call;
@@ -334,6 +336,7 @@ construct_runtime!(
 		Deip: pallet_deip::{Module, Call, Storage, Event<T>, Config},
 		DeipProposal: pallet_deip_proposal::{Module, Call, Storage, Event<T>, Config},
 		DeipOrg: pallet_deip_org::{Module, Call, Storage, Event<T>, Config},
+		DeipOrgProposal: pallet_deip_org_proposal::{Module, Call, Storage, Config},
 		Multisig: pallet_multisig::{Module, Call, Storage, Event<T>},
 	}
 );
