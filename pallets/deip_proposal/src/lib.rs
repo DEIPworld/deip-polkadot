@@ -49,8 +49,9 @@ pub mod pallet {
     use sp_std::prelude::*;
     use sp_std::collections::{btree_map::BTreeMap};
     use sp_std::iter::FromIterator;
+    use sp_std::fmt::Debug;
     
-    use sp_runtime::traits::Dispatchable;
+    use sp_runtime::traits::{Dispatchable};
     
     /// Configuration trait
     #[pallet::config]
@@ -65,6 +66,8 @@ pub mod pallet {
              UnfilteredDispatchable<Origin = Self::Origin> +
              frame_support::dispatch::Codec + 
              IsSubType<Call<Self>>;
+        
+        type DeipAccountId: Into<Self::AccountId> + Parameter + Member;
     }
     
     #[doc(hidden)]
@@ -134,9 +137,11 @@ pub mod pallet {
     /// Module contains some proposal assertions
     mod proposal_assertions {
         use super::{
-            Config, DeipProposal, BatchTreeNode, StopTraverse,
-            BatchItemKind, ProposalBatchItemOf, traverse_batch_tree
+            Config, BatchTreeNode, StopTraverse,
+            BatchItemKind, BatchItemKindT, traverse_batch_tree
         };
+        use crate::{ProposalBatchX, ProposalId};
+
         /// Proposal assertions enumeration
         pub enum ProposalAssertions {
             /// Reached depth limit of nested proposals
@@ -145,20 +150,21 @@ pub mod pallet {
             SelfReference
         }
         /// Perform some assertions on proposal object
-        pub fn assert_proposal<T: Config>(
-            proposal: &DeipProposal<T>,
+        pub fn assert_proposal<T: Config, BatchItem: BatchItemKindT<T>>(
+            batch: &ProposalBatchX<BatchItem>,
+            proposal_id: &ProposalId,
             depth_limit: usize,
         )
             -> Option<ProposalAssertions>
         {
             let mut res = None;
-            traverse_batch_tree::<T, _>(&proposal.batch, |node: BatchTreeNode<&ProposalBatchItemOf<T>>| {
+            traverse_batch_tree::<T, _, _>(&batch, |node: BatchTreeNode<&BatchItem>| {
                 if node.depth > depth_limit {
                     res = Some(ProposalAssertions::DepthLimit);
                     return Some(StopTraverse)
                 }
-                if let BatchItemKind::Decide(proposal_id) = BatchItemKind::<T>::kind(node.data) {
-                    if proposal_id == &proposal.id {
+                if let BatchItemKind::Decide(id) = BatchItemKindT::<T>::kind(node.data) {
+                    if id == proposal_id {
                         res = Some(ProposalAssertions::SelfReference);
                         return Some(StopTraverse)
                     }
@@ -169,32 +175,38 @@ pub mod pallet {
         }
     }
     
+    pub type ProposalBatchX<Item> = Vec<Item>;
+    
     use batch_item_kind::*;
     #[doc(no_inline)]
     /// Module contains classification of the proposal batch item
     pub mod batch_item_kind {
         use frame_support::traits::IsSubType;
-        use super::{Config, Call, ProposalBatch, ProposalId, ProposalBatchItemOf};
-        
+        use super::{Config, Call, ProposalId};
+        use crate::{ProposalBatchX, BatchItem};
+
         /// Batch item kinds
-        pub enum BatchItemKind<'a, T: Config> {
+        pub enum BatchItemKind<'a, Item> {
             /// Batch item contains `propose` dispatchable
-            Propose(&'a ProposalBatch<T>),
+            Propose(&'a ProposalBatchX<Item>),
             /// Batch item contains `decide` dispatchable
             Decide(&'a ProposalId),
             Other
         }
-        impl<'a, T: Config> BatchItemKind<'a, T> {
-            /// Classify proposal batch item
-            pub fn kind(item: &'a ProposalBatchItemOf<T>) -> BatchItemKind<'a, T> {
-                match item.call.is_sub_type() {
+        pub trait BatchItemKindT<T: Config>: Sized {
+            fn kind(&self) -> BatchItemKind<'_, Self>;
+        }
+        impl<T: Config> BatchItemKindT<T> for BatchItem<T::DeipAccountId, <T as Config>::Call> {
+
+            fn kind(&self) -> BatchItemKind<'_, Self> {
+                match self.call.is_sub_type() {
                     Some(Call::propose(batch, _)) => {
-                        Self::Propose(batch)
+                        BatchItemKind::Propose(batch)
                     },
                     Some(Call::decide(proposal_id, _decision)) => {
-                        Self::Decide(proposal_id)
+                        BatchItemKind::Decide(proposal_id)
                     },
-                    _ => Self::Other
+                    _ => BatchItemKind::Other
                 }
             }
         }
@@ -207,8 +219,10 @@ pub mod pallet {
         use sp_std::collections::vec_deque::VecDeque;
         use sp_std::prelude::*;
         use sp_std::iter::{Peekable, Iterator};
-        use super::{Config, ProposalBatch, ProposalBatchItemOf, BatchItemKind};
-        
+        use super::{Config, BatchItemKind};
+        use crate::batch_item_kind::BatchItemKindT;
+        use super::ProposalBatchX;
+
         /// Visited tree node abstraction
         pub struct BatchTreeNode<Data> {
             /// Nested level
@@ -221,14 +235,14 @@ pub mod pallet {
         
         /// Batch tree traverse operation.
         /// Invokes `visit_node` callback on each node and accepts flow-control commands from it
-        pub fn traverse_batch_tree<'a, T: Config, V>(
-            root: &'a ProposalBatch<T>,
+        pub fn traverse_batch_tree<'a, T: Config, V, Data: BatchItemKindT<T>>(
+            root: &'a ProposalBatchX<Data>,
             mut visit_node: V
         )
-            where V: FnMut(BatchTreeNode<&'a ProposalBatchItemOf<T>>) -> Option<StopTraverse>
+            where V: FnMut(BatchTreeNode<&'a Data>) -> Option<StopTraverse>,
         {
-            let mut stack = VecDeque::<Peekable<Box<dyn Iterator<Item=&ProposalBatchItemOf<T>>>>>::new();
-            let boxed: Box<dyn Iterator<Item=&ProposalBatchItemOf<T>>> = Box::new(root.iter());
+            let mut stack = VecDeque::<Peekable<Box<dyn Iterator<Item=&Data>>>>::new();
+            let boxed: Box<dyn Iterator<Item=&Data>> = Box::new(root.iter());
             stack.push_front(boxed.peekable());
             while !stack.is_empty() {
                 let depth = stack.len();
@@ -236,9 +250,9 @@ pub mod pallet {
                     if visit_node(BatchTreeNode { depth, data }).is_some() {
                         return
                     }
-                    match BatchItemKind::<T>::kind(data) {
+                    match BatchItemKindT::<T>::kind(data) {
                         BatchItemKind::Propose(batch) => {
-                            let boxed: Box<dyn Iterator<Item=&ProposalBatchItemOf<T>>> = Box::new(batch.iter());
+                            let boxed: Box<dyn Iterator<Item=&Data>> = Box::new(batch.iter());
                             stack.push_front(boxed.peekable());
                             break
                         },
@@ -256,12 +270,13 @@ pub mod pallet {
     #[doc(no_inline)]
     pub mod entrypoint {
         use super::{Config, Error};
-        use super::{StorageWrite, DeipProposal, ProposalBatch, ProposalId};
-        
+        use super::{StorageWrite, DeipProposal, ProposalId};
+        use crate::InputProposalBatch;
+
         /// Create proposal
         pub fn propose<T: Config>(
             author: T::AccountId,
-            batch: ProposalBatch<T>,
+            batch: InputProposalBatch<T>,
             external_id: Option<ProposalId>
         )
             -> Result<(), Error<T>> 
@@ -283,7 +298,7 @@ pub mod pallet {
         #[pallet::weight(10)]
         pub fn propose(
             origin: OriginFor<T>,
-            batch: Vec<ProposalBatchItemOf<T>>,
+            batch: Vec<InputProposalBatchItem<T>>,
             external_id: Option<ProposalId>
         )
             -> DispatchResultWithPostInfo
@@ -393,7 +408,16 @@ pub mod pallet {
     >;
     
     #[allow(type_alias_bounds)]
+    pub type InputProposalBatchItem<T: Config> = BatchItem<
+        T::DeipAccountId,
+        <T as Config>::Call
+    >;
+    
+    #[allow(type_alias_bounds)]
     pub type ProposalBatch<T: Config> = Vec<ProposalBatchItemOf<T>>;
+    
+    #[allow(type_alias_bounds)]
+    pub type InputProposalBatch<T: Config> = Vec<InputProposalBatchItem<T>>;
     
     /// Proposal object
     #[derive(Debug, Encode, Decode, Clone, Eq, PartialEq)]
@@ -508,31 +532,19 @@ pub mod pallet {
         /// Create proposal object.
         /// Fail if input arguments violates proposal assertions (See [proposal_assertions](./module.proposal_assertions))
         pub fn create(
-            batch: Vec<ProposalBatchItemOf<T>>,
+            batch: InputProposalBatch<T>,
             author: T::AccountId,
             external_id: Option<ProposalId>,
             storage_ops: &mut StorageOpsQueue<StorageOps<T>>
         )
             -> Result<(), Error<T>>
         {
-            let decisions = BTreeMap::from_iter(
-                batch.iter().map(|x| (
-                    x.account.clone(),
-                    ProposalMemberDecision::Pending
-                ))
-            );
-            let proposal = Self {
-                id: external_id.unwrap_or_else(Self::timepoint),
-                batch,
-                decisions,
-                state: ProposalState::Pending,
-                author
-            };
+            let id = external_id.unwrap_or_else(Self::timepoint);
             ensure!(
-                !ProposalStorage::<T>::contains_key(&proposal.author, &proposal.id),
+                !ProposalStorage::<T>::contains_key(&author, &id),
                 Error::<T>::AlreadyExist
             );
-            match assert_proposal(&proposal, 2) {
+            match assert_proposal::<T, _>(&batch, &id, 2) {
                 Some(ProposalAssertions::DepthLimit) => {
                     return Err(Error::<T>::ReachDepthLimit)
                 },
@@ -541,6 +553,32 @@ pub mod pallet {
                 },
                 None => (),
             }
+            
+            let batch: ProposalBatch<T> = batch
+                .into_iter()
+                .map(|x| {
+                    let BatchItem { account, call } = x;
+                    BatchItem {
+                        account: account.into(),
+                        call
+                    }
+                })
+                .collect();
+            
+            let decisions = BTreeMap::from_iter(
+                batch.iter().map(|x| (
+                    x.account.clone(),
+                    ProposalMemberDecision::Pending
+                ))
+            );
+            
+            let proposal = Self {
+                id,
+                batch,
+                decisions,
+                state: ProposalState::Pending,
+                author
+            };
             storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Proposed {
                 author: proposal.author.clone(),
                 batch: proposal.batch.clone(),

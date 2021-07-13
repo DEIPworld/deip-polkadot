@@ -1,9 +1,10 @@
 {
-  "OrgProposalBatchItem": {
-    "account": "OrgProposalAccount",
+  "InputProposalBatch": "Vec<InputProposalBatchItem>",
+  "InputProposalBatchItem": {
+    "account": "DeipAccountId",
     "call": "Call"
   },
-  "OrgProposalAccount": {
+  "DeipAccountId": {
     "_enum": {
       "Native": "AccountId",
       "Org": "OrgName"

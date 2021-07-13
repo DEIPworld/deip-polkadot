@@ -49,6 +49,8 @@ mod weights;
 
 pub mod app_tag_ext;
 
+pub mod deip_account;
+
 /// Import the template pallet.
 pub use pallet_template;
 
@@ -281,14 +283,13 @@ impl pallet_deip::Config for Runtime {
 impl pallet_deip_proposal::pallet::Config for Runtime {
     type Event = Event;
     type Call = Call;
+    type DeipAccountId = deip_account::DeipAccountId<Self::AccountId>;
 }
 
 impl pallet_deip_org::Config for Runtime {
     type Event = Event;
     type Call = Call;
 }
-
-impl pallet_deip_org_proposal::Config for Runtime {}
 
 impl pallet_utility::Config for Runtime {
 	type Event = Event;
@@ -336,7 +337,6 @@ construct_runtime!(
 		Deip: pallet_deip::{Module, Call, Storage, Event<T>, Config},
 		DeipProposal: pallet_deip_proposal::{Module, Call, Storage, Event<T>, Config},
 		DeipOrg: pallet_deip_org::{Module, Call, Storage, Event<T>, Config},
-		DeipOrgProposal: pallet_deip_org_proposal::{Module, Call, Storage, Config},
 		Multisig: pallet_multisig::{Module, Call, Storage, Event<T>},
 	}
 );

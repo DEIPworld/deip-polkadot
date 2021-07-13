@@ -30,7 +30,6 @@ pallet-deip = { path = "../pallets/deip", default-features = false }
 deip-runtime-api = {default-features = false, path = "../pallets/deip/runtime-api" }
 pallet-deip-proposal = { path = "../pallets/deip_proposal", default-features = false }
 pallet-deip-org = { path = "../pallets/deip_org", default-features = false }
-pallet-deip-org-proposal = { path = "../pallets/deip_org_proposal", default-features = false }
 
 # Substrate dependencies
 frame-benchmarking = { default-features = false, optional = true, version = '3.0.0' }
@@ -91,7 +90,6 @@ std = [
     'pallet-deip/std',
     'pallet-deip-proposal/std',
     'pallet-deip-org/std',
-    'pallet-deip-org-proposal/std',
     'pallet-timestamp/std',
     'pallet-transaction-payment/std',
     'pallet-transaction-payment-rpc-runtime-api/std',
