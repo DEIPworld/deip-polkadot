@@ -21,7 +21,6 @@ fn create_ok_project(maybe_account_id: Option<<Test as system::Config>::AccountI
 		team_id: account_id,
 		description: H256::random(),
 		domains: vec![domain_id],
-		members: vec![account_id],
 	};
 	
 	assert_ok!(Deip::create_project(Origin::signed(account_id), project.clone()));
@@ -176,7 +175,6 @@ fn cant_add_project_with_non_exixsted_domain() {
 			team_id: account_id,
 			description: H256::random(),
 			domains: vec![domain],
-			members: vec![account_id],
 		};
 		
 		assert_noop!(
@@ -206,18 +204,14 @@ fn update_project() {
 		let (project_id, ..) = create_ok_project(None);
 
 		let new_description = H256::random();
-		let new_members = vec![1,2];
 
-		assert_ok!(Deip::update_project(Origin::signed(DEFAULT_ACCOUNT_ID), project_id, Some(new_description), Some(true), Some(new_members.clone())));
+		assert_ok!(Deip::update_project(Origin::signed(DEFAULT_ACCOUNT_ID), project_id, Some(new_description), Some(true)));
 
 
 		let project_stored = ProjectMap::<Test>::get(project_id);
 
 		assert_eq!(project_stored.description, new_description);
 		assert_eq!(project_stored.is_private, true);
-		assert_eq!(project_stored.members, new_members);
-
-
 	})
 }
 
@@ -231,10 +225,9 @@ fn cant_update_project_not_belonged_to_your_signature() {
 		let (project_id, ..) = create_ok_project(Some(account_id));
 
 		let new_description = H256::random();
-		let new_members = vec![1,2];
 
 		assert_noop!(
-			Deip::update_project(Origin::signed(wrong_account_id), project_id, Some(new_description), Some(true), Some(new_members.clone())),
+			Deip::update_project(Origin::signed(wrong_account_id), project_id, Some(new_description), Some(true)),
 			Error::<Test>::NoPermission
 		);
 	})
@@ -246,7 +239,7 @@ fn cant_update_not_existed_project() {
 		let project_id = ProjectId::random();
 
 		assert_noop!(
-			Deip::update_project(Origin::signed(DEFAULT_ACCOUNT_ID), project_id, None, None, None),
+			Deip::update_project(Origin::signed(DEFAULT_ACCOUNT_ID), project_id, None, None),
 			Error::<Test>::NoSuchProject
 		);
 	})

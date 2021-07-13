@@ -162,8 +162,6 @@ pub struct Project<Hash, AccountId> {
     description: Hash,
     /// List of Domains aka tags Project matches
     domains: Vec<DomainId>,
-    /// List of Project Members. Determine who is participated in the project
-    members: Vec<AccountId>
 }
 
 /// Digital asset. Contains information of content and authors of Digital asset.
@@ -448,10 +446,9 @@ decl_module! {
         ///
 		/// - `project_id`: [Project]((./struct.Project.html)) identifier (external_id) to be updated
         /// - `description`: Optional. Hash of description
-        /// - `is_private`: Optional.  Determine visible project or not 
-        /// - `members`: Optional.  New set of members
+        /// - `is_private`: Optional.  Determine visible project or not
         #[weight = 10_000]
-        fn update_project(origin, project_id: ProjectId, description: Option<T::Hash>, is_private: Option<bool>, members: Option<Vec<T::AccountId>>) -> DispatchResult {
+        fn update_project(origin, project_id: ProjectId, description: Option<T::Hash>, is_private: Option<bool>) -> DispatchResult {
             // Check that the extrinsic was signed and get the signer.
             // This function will return an error if the extrinsic is not signed.
             // https://substrate.dev/docs/en/knowledgebase/runtime/origin
@@ -469,10 +466,6 @@ decl_module! {
 
                 if let Some(value) = is_private  {
                     project.is_private = value;
-                }
-                
-                if let Some(value) = members  {
-                    project.members = value;
                 }
 
                 Ok(())
