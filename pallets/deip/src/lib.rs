@@ -43,7 +43,7 @@ use frame_support::{
     storage::{ IterableStorageMap, IterableStorageDoubleMap }, 
 };
 use frame_system::{ self as system, ensure_signed };
-use sp_std::vec::Vec;
+use sp_std::prelude::*;
 use sp_runtime::{ RuntimeDebug };
 pub use sp_core::{ H160, H256 };
 #[cfg(feature = "std")]
@@ -413,31 +413,7 @@ decl_module! {
             // https://substrate.dev/docs/en/knowledgebase/runtime/origin
             let account = ensure_signed(origin)?;
             
-            for domain in &project.domains {
-                ensure!(Domains::contains_key(&domain), Error::<T>::DomainNotExists);
-            }
-
-            let mut projects = Projects::<T>::get();
-
-            // We don't want to add duplicate projects, so we check whether the potential new
-			// project is already present in the list. Because the list is always ordered, we can
-			// leverage the binary search which makes this check O(log n).
-			match projects.binary_search_by_key(&project.external_id, |&(a,_)| a) {
-				// If the search succeeds, the project is already a exists, so just return
-				Ok(_) => return Err(Error::<T>::ProjectAlreadyExists.into()),
-				// If the search fails, the project is not a exists and we learned the index where
-				// they should be inserted
-				Err(index) => {
-					projects.insert(index, (project.external_id, project.team_id.clone()));
-					Projects::<T>::put(projects);
-				}
-			};
-
-            // Store the projects related to account
-            ProjectMap::<T>::insert(project.external_id, project.clone());
-
-            // Emit an event that the project was created.
-            Self::deposit_event(RawEvent::ProjectCreated(account, project));
+            Self::create_project_impl(account, project)?
         }
 
         /// Allow a user to update project.
@@ -809,5 +785,36 @@ impl<T: Config> Module<T> {
     }
     pub fn get_review(review_id: &ReviewId) -> ReviewOf<T> {
         ReviewMap::<T>::get(review_id)
+    }
+
+    pub fn create_project_impl(
+        account: T::AccountId,
+        project: ProjectOf<T>,
+    )
+        -> Result<(), Error<T>>
+    {
+        for domain in &project.domains {
+            ensure!(Domains::contains_key(&domain), Error::<T>::DomainNotExists);
+        }
+
+        let mut projects = Projects::<T>::get();
+
+        // We don't want to add duplicate projects, so we check whether the potential new
+        // project is already present in the list. Because the list is always ordered, we can
+        // leverage the binary search which makes this check O(log n).
+        match projects.binary_search_by_key(&project.external_id, |&(k, _)| k) {
+            Ok(_) => return Err(Error::<T>::ProjectAlreadyExists.into()),
+            Err(index) => {
+                projects.insert(index, (project.external_id, project.team_id.clone()));
+                Projects::<T>::put(projects);
+            }
+        };
+
+        // Store the projects related to account
+        ProjectMap::<T>::insert(project.external_id, project.clone());
+
+        Self::deposit_event(RawEvent::ProjectCreated(account, project));
+
+        Ok(())
     }
 }

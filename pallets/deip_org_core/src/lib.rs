@@ -113,35 +113,11 @@ pub mod pallet {
         )
             -> DispatchResultWithPostInfo
         {
-            // let author = ensure_signed(origin)?;
+            let author = ensure_signed(origin)?;
 
-            pallet_deip::Module::<T>::create_project(origin, into_native::<T>(project))?;
+            pallet_deip::Module::<T>::create_project_impl(author, into_native::<T>(project))?;
 
             Ok(Some(0).into())
         }
     }
-
-    // #[pallet::call]
-    // impl<T: Config> Pallet<T> {
-    //     #[pallet::weight(10_000)]
-    //     pub fn propose(
-    //         origin: OriginFor<T>,
-    //         batch: Vec<OrgProposalBatchItem<T>>,
-    //         external_id: Option<ProposalId>
-    //     )
-    //         -> DispatchResultWithPostInfo
-    //     {
-    //         let author = ensure_signed(origin)?;
-            
-    //         // frame_support::debug::RuntimeLogger::init();
-            
-    //         imp::propose::<T>(
-    //             author,
-    //             batch.into_iter().map(into_native::<T>).collect(),
-    //             external_id
-    //         )?;
-            
-    //         Ok(Some(0).into())
-    //     }
-    // }
 }
