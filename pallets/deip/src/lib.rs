@@ -153,15 +153,15 @@ pub struct Domain {
 #[cfg_attr(feature = "std", serde(rename_all = "camelCase"))]
 pub struct Project<Hash, AccountId> {
     /// Determine visible project or not 
-    is_private: bool,
+    pub is_private: bool,
     /// Reference for external world and uniques control 
-    external_id: ProjectId,
+    pub external_id: ProjectId,
     /// Reference to the Team 
-    team_id: AccountId,
+    pub team_id: AccountId,
     /// Hash of Project description
-    description: Hash,
+    pub description: Hash,
     /// List of Domains aka tags Project matches
-    domains: Vec<DomainId>,
+    pub domains: Vec<DomainId>,
 }
 
 /// Digital asset. Contains information of content and authors of Digital asset.
@@ -407,7 +407,7 @@ decl_module! {
         ///
 		/// - `project`: [Project](./struct.Project.html) to be created.
         #[weight = 10_000]
-        fn create_project(origin, project: ProjectOf<T>) {
+        pub fn create_project(origin, project: ProjectOf<T>) {
             // Check that the extrinsic was signed and get the signer.
             // This function will return an error if the extrinsic is not signed.
             // https://substrate.dev/docs/en/knowledgebase/runtime/origin
