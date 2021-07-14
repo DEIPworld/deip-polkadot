@@ -39,12 +39,12 @@ use frame_support::{
     codec::{Decode, Encode}, ensure,
     decl_module, decl_storage, decl_event, decl_error, 
     StorageMap,
-    dispatch::{ DispatchResult },
+    dispatch::{ DispatchResult, Parameter },
     storage::{ IterableStorageMap, IterableStorageDoubleMap }, 
 };
 use frame_system::{ self as system, ensure_signed };
 use sp_std::vec::Vec;
-use sp_runtime::{ RuntimeDebug };
+use sp_runtime::{ RuntimeDebug, traits::Member };
 pub use sp_core::{ H160, H256 };
 #[cfg(feature = "std")]
 use serde::{Serialize, Deserialize};
@@ -62,7 +62,7 @@ pub const MAX_DOMAINS: u32 = 100;
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "std", serde(rename_all = "camelCase"))]
-enum ProjectContentType {
+pub enum ProjectContentType {
     Announcement,
     FinalResult,
     MilestoneArticle,
@@ -94,6 +94,8 @@ impl Default for ProjectContentType {
 pub trait Config: frame_system::Config + pallet_timestamp::Config {
     /// The overarching event type.
     type Event: From<Event<Self>> + Into<<Self as frame_system::Config>::Event>;
+    
+    type DeipAccountId: Into<Self::AccountId> + Parameter + Member;
 }
 
 /// Unique Project ID reference
@@ -407,11 +409,25 @@ decl_module! {
         ///
 		/// - `project`: [Project](./struct.Project.html) to be created.
         #[weight = 10_000]
-        fn create_project(origin, project: ProjectOf<T>) {
+        fn create_project(origin,
+            is_private: bool,
+            external_id: ProjectId,
+            team_id: T::DeipAccountId,
+            description: T::Hash,
+            domains: Vec<DomainId>
+        ) {
             // Check that the extrinsic was signed and get the signer.
             // This function will return an error if the extrinsic is not signed.
             // https://substrate.dev/docs/en/knowledgebase/runtime/origin
             let account = ensure_signed(origin)?;
+            
+            let project = ProjectOf::<T> {
+                is_private,
+                external_id,
+                team_id: team_id.into(),
+                description,
+                domains
+            };
             
             for domain in &project.domains {
                 ensure!(Domains::contains_key(&domain), Error::<T>::DomainNotExists);
@@ -483,8 +499,28 @@ decl_module! {
         ///
 		/// - `content`: [Content](./struct.ProjectContent.html) to be created
         #[weight = 10_000]
-        fn create_project_content(origin, content: ProjectContentOf<T>) {
+        fn create_project_content(origin,
+            external_id: ProjectContentId,
+            project_external_id: ProjectId,
+            team_id: T::DeipAccountId,
+            content_type: ProjectContentType,
+            description: T::Hash,
+            content: T::Hash,
+            authors: Vec<T::DeipAccountId>,
+            references: Option<Vec<ProjectContentId>>
+        ) {
             let account = ensure_signed(origin)?;
+            
+            let content = ProjectContentOf::<T> {
+                external_id,
+                project_external_id,
+                team_id: team_id.into(),
+                content_type,
+                description,
+                content,
+                authors: authors.into_iter().map(Into::into).collect(),
+                references
+            };
 
             let mut project_content = ProjectsContent::<T>::get();
 
@@ -531,7 +567,7 @@ decl_module! {
             end_date: T::Moment,
             contract_hash: T::Hash,
             maybe_start_date: Option<T::Moment>,
-            parties: Vec<T::AccountId>,
+            parties: Vec<T::DeipAccountId>,
             projects: Vec<ProjectId>
         ) {
             let mut projects = projects;
@@ -545,6 +581,8 @@ decl_module! {
                 ensure!(start_date >= timestamp, Error::<T>::NdaStartDateMustBeLaterOrEqualCurrentMoment);
                 ensure!(end_date > start_date, Error::<T>::NdaStartDateMustBeLessThanEndDate);
             }
+            
+            let parties: Vec<T::AccountId> = parties.into_iter().map(Into::into).collect();
             
             projects.iter()
                 .try_for_each(|id| -> DispatchResult {
@@ -704,8 +742,26 @@ decl_module! {
         ///
 		/// - `review`: [Review](./struct.Review.html) to be created
         #[weight = 10_000]
-        fn create_review(origin, review: ReviewOf<T>) {
+        fn create_review(origin,
+            external_id: ReviewId,
+            author: T::DeipAccountId,
+            content: T::Hash,
+            domains: Vec<DomainId>,
+            assessment_model: u32,
+            weight: Vec<u8>,
+            project_content_external_id: ProjectContentId,
+        ) {
             let account = ensure_signed(origin)?;
+            
+            let review = ReviewOf::<T> {
+                external_id,
+                author: author.into(),
+                content,
+                domains,
+                assessment_model,
+                weight,
+                project_content_external_id
+            };
 
             let mut reviews = Reviews::<T>::get();
 
