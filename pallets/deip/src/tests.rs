@@ -21,7 +21,6 @@ fn create_ok_project(maybe_account_id: Option<<Test as system::Config>::AccountI
 		team_id: account_id,
 		description: H256::random(),
 		domains: vec![domain_id],
-		members: vec![account_id],
 	};
 	
 	assert_ok!(Deip::create_project(Origin::signed(account_id), project.clone()));
@@ -176,7 +175,6 @@ fn cant_add_project_with_non_exixsted_domain() {
 			team_id: account_id,
 			description: H256::random(),
 			domains: vec![domain],
-			members: vec![account_id],
 		};
 		
 		assert_noop!(
