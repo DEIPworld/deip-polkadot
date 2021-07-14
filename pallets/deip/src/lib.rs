@@ -100,6 +100,8 @@ pub trait Config: frame_system::Config + pallet_timestamp::Config {
 
 /// Unique Project ID reference
 pub type ProjectId = H160;
+/// Unique ProjectTokenSale ID reference
+pub type ProjectTokenSaleId = H160;
 /// Unique DomainId reference
 pub type DomainId = H160;
 /// Unique Project Contnt reference 
@@ -164,6 +166,43 @@ pub struct Project<Hash, AccountId> {
     description: Hash,
     /// List of Domains aka tags Project matches
     domains: Vec<DomainId>,
+}
+
+#[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "std", serde(rename_all = "camelCase"))]
+pub enum ProjectTokenSaleStatus {
+    Active,
+    Finished,
+    Expired,
+    Inactive,
+}
+
+impl Default for ProjectTokenSaleStatus {
+    fn default() -> Self {
+        ProjectTokenSaleStatus::Inactive
+    }
+}
+
+/// Core entity of pallet. Everything connected to Project. 
+/// Only Account (Team) stand before Project in hierarchy.
+#[derive(Encode, Decode, Clone, Default, RuntimeDebug, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "std", serde(rename_all = "camelCase"))]
+pub struct ProjectTokenSale<Moment> {
+    /// Reference for external world and uniques control 
+    external_id: ProjectTokenSaleId,
+    /// Reference to the Project
+    project_id: ProjectId,
+    // when the sale starts
+    start_time: Moment,
+    // when it supposed to end
+    end_time: Moment,
+    status: ProjectTokenSaleStatus,
+    // how many we already got
+    total_amount: (),
+    soft_cap: (),
+    hard_cap: (),
 }
 
 /// Digital asset. Contains information of content and authors of Digital asset.
@@ -354,6 +393,9 @@ decl_error! {
 
         /// Access Forbiten
         NoPermission,
+
+        // token sale
+        TokenSaleStartDateMustBeLaterOrEqualCurrentMoment,
     }
 }
 
@@ -454,6 +496,21 @@ decl_module! {
 
             // Emit an event that the project was created.
             Self::deposit_event(RawEvent::ProjectCreated(account, project));
+        }
+
+        #[weight = 10_000]
+        fn create_project_token_sale(origin,
+            external_id: ProjectTokenSaleId,
+            project_id: ProjectId,
+            start_time: T::Moment,
+            end_time: T::Moment,
+            soft_cap: (),
+            hard_cap: (),
+        ) {
+            let timestamp = pallet_timestamp::Module::<T>::get();
+            ensure!(start_time >= timestamp, Error::<T>::TokenSaleStartDateMustBeLaterOrEqualCurrentMoment);
+
+
         }
 
         /// Allow a user to update project.
