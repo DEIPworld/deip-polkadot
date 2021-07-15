@@ -118,7 +118,7 @@ pub type ReviewOf<T> = Review<<T as system::Config>::Hash, <T as system::Config>
 pub type NdaOf<T> = Nda<<T as system::Config>::Hash, <T as system::Config>::AccountId, <T as pallet_timestamp::Config>::Moment>;
 pub type NdaAccessRequestOf<T> = NdaAccessRequest<<T as system::Config>::Hash, <T as system::Config>::AccountId>;
 pub type ProjectContentOf<T> = ProjectContent<<T as system::Config>::Hash, <T as system::Config>::AccountId>;
-
+pub type ProjectTokenSaleOf<T> = ProjectTokenSale<<T as pallet_timestamp::Config>::Moment>;
 
 /// Review 
 #[derive(Encode, Decode, Clone, Default, RuntimeDebug, PartialEq, Eq)]
@@ -168,7 +168,7 @@ pub struct Project<Hash, AccountId> {
     domains: Vec<DomainId>,
 }
 
-#[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
+#[derive(Encode, Decode, Clone, Copy, RuntimeDebug, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "std", serde(rename_all = "camelCase"))]
 pub enum ProjectTokenSaleStatus {
@@ -294,6 +294,7 @@ decl_event! {
         AccountId = <T as frame_system::Config>::AccountId,
         Project = ProjectOf<T>,
         Review = ReviewOf<T>,
+        ProjectTokenSale = ProjectTokenSaleOf<T>,
     {
         // ==== Projects ====
 
@@ -325,6 +326,9 @@ decl_event! {
 
         /// Event emitted when a review has been created. [BelongsTo, Review]
         ReviewCreated(AccountId, Review),
+
+        /// Event emitted when a token sale for project has been created.
+        ProjectTokenSaleCreated(ProjectId, ProjectTokenSale),
     }
 }
 
@@ -395,7 +399,12 @@ decl_error! {
         NoPermission,
 
         // token sale
-        TokenSaleStartDateMustBeLaterOrEqualCurrentMoment,
+        TokenSaleStartTimeMustBeLaterOrEqualCurrentMoment,
+        TokenSaleEndTimeMustBeLaterStartTime,
+        TokenSaleSoftCapShouldBePositive,
+        TokenSaleHardCapShouldBeGreaterOrEqualSoftCap,
+        TokenSaleScheduledAlready,
+        TokenSaleAlreadyExists,
     }
 }
 
@@ -405,6 +414,9 @@ decl_storage! {
         ProjectMap get(fn project): map hasher(identity) ProjectId => ProjectOf<T>;
         /// Project list, guarantees uniquest and provides Project listing
         Projects get(fn projects): Vec<(ProjectId, T::AccountId)>;
+
+        ProjectTokenSaleMap get(fn project_token_sale): map hasher(identity) ProjectTokenSaleId => ProjectTokenSaleOf<T>;
+        ProjectTokenSales get(fn token_sales): Vec<(ProjectId, ProjectTokenSaleStatus, ProjectTokenSaleId)>;
 
         /// Map to Project Content Info
         ProjectContentMap get(fn project_content_entity): double_map hasher(identity) ProjectId, hasher(identity) ProjectContentId => ProjectContentOf<T>;
@@ -504,13 +516,54 @@ decl_module! {
             project_id: ProjectId,
             start_time: T::Moment,
             end_time: T::Moment,
-            soft_cap: (),
-            hard_cap: (),
+            soft_cap: u64,
+            hard_cap: u64,
         ) {
+            let account = ensure_signed(origin)?;
+
+            ensure!(!ProjectTokenSaleMap::<T>::contains_key(external_id), Error::<T>::TokenSaleAlreadyExists);
+
             let timestamp = pallet_timestamp::Module::<T>::get();
-            ensure!(start_time >= timestamp, Error::<T>::TokenSaleStartDateMustBeLaterOrEqualCurrentMoment);
+            ensure!(start_time >= timestamp, Error::<T>::TokenSaleStartTimeMustBeLaterOrEqualCurrentMoment);
+            ensure!(end_time > start_time, Error::<T>::TokenSaleEndTimeMustBeLaterStartTime);
 
+            ensure!(soft_cap > 0, Error::<T>::TokenSaleSoftCapShouldBePositive);
+            ensure!(hard_cap >= soft_cap, Error::<T>::TokenSaleHardCapShouldBeGreaterOrEqualSoftCap);
 
+            let projects = Projects::<T>::get();
+            match projects.binary_search_by_key(&project_id, |&(p, _)| p) {
+                Ok(index) => {
+                    if projects[index].1 != account {
+                        return Err(Error::<T>::ProjectNotBelongToTeam.into());
+                    }
+                },
+                Err(_) => return Err(Error::<T>::NoSuchProject.into()),
+            }
+
+            let mut token_sales = ProjectTokenSales::get();
+            if let Ok(_) = token_sales.binary_search_by_key(&(project_id, ProjectTokenSaleStatus::Active), |&(p, t, _)| (p, t)) {
+                return Err(Error::<T>::TokenSaleScheduledAlready.into());
+            }
+
+            let index = match token_sales.binary_search_by_key(&(project_id, ProjectTokenSaleStatus::Inactive), |&(p, t, _)| (p, t)) {
+                Ok(_) => return Err(Error::<T>::TokenSaleScheduledAlready.into()),
+                Err(i) => i,
+            };
+
+            let new_project_token_sale = ProjectTokenSale {
+                external_id: external_id,
+                project_id: project_id,
+                start_time: start_time,
+                end_time: end_time,
+                status: ProjectTokenSaleStatus::Inactive,
+                ..Default::default()
+            };
+
+            token_sales.insert(index, (project_id, ProjectTokenSaleStatus::Inactive, external_id));
+            ProjectTokenSales::put(token_sales);
+            ProjectTokenSaleMap::<T>::insert(external_id, new_project_token_sale.clone());
+
+            Self::deposit_event(RawEvent::ProjectTokenSaleCreated(project_id, new_project_token_sale));
         }
 
         /// Allow a user to update project.
