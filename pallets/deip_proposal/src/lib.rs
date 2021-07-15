@@ -27,6 +27,12 @@
 
 #[cfg(test)]
 mod tests;
+mod batch_tree;
+mod proposal;
+mod batch_item_kind;
+mod storage;
+pub mod entrypoint;
+mod batch_assertions;
 
 #[doc(inline)]
 pub use pallet::*;
@@ -41,17 +47,22 @@ pub mod pallet {
     use frame_system::RawOrigin;
     
     use frame_support::pallet_prelude::*;
-    use frame_support::{Hashable};
     use frame_support::weights::{PostDispatchInfo, GetDispatchInfo};
     
     use frame_support::traits::{UnfilteredDispatchable, IsSubType};
     
     use sp_std::prelude::*;
     use sp_std::collections::{btree_map::BTreeMap};
-    use sp_std::iter::FromIterator;
-    use sp_std::fmt::Debug;
     
     use sp_runtime::traits::{Dispatchable};
+    
+    use crate::proposal::{
+        ProposalId, DeipProposal,
+        ProposalMemberDecision, ProposalState,
+        ProposalBatch, ProposalBatchItemOf,
+        InputProposalBatchItem
+    };
+    use crate::storage::StorageWrite;
     
     /// Configuration trait
     #[pallet::config]
@@ -97,7 +108,7 @@ pub mod pallet {
     
     #[pallet::event]
     #[pallet::metadata(u32 = "SpecialU32")]
-    #[pallet::generate_deposit(fn deposit_event)]
+    #[pallet::generate_deposit(pub(crate) fn deposit_event)]
     pub enum Event<T: Config> {
         /// Emits when proposal created
         Proposed {
@@ -133,166 +144,6 @@ pub mod pallet {
 		fn build(&self) {}
 	}
     
-    pub use proposal_assertions::*;
-    /// Module contains some proposal assertions
-    mod proposal_assertions {
-        use super::{
-            Config, BatchTreeNode, StopTraverse,
-            BatchItemKind, BatchItemKindT, traverse_batch_tree
-        };
-        use crate::{ProposalBatchX, ProposalId};
-
-        /// Proposal assertions enumeration
-        pub enum ProposalAssertions {
-            /// Reached depth limit of nested proposals
-            DepthLimit,
-            /// Proposal has self-references
-            SelfReference
-        }
-        /// Perform some assertions on proposal object
-        pub fn assert_proposal<T: Config, BatchItem: BatchItemKindT<T>>(
-            batch: &ProposalBatchX<BatchItem>,
-            proposal_id: &ProposalId,
-            depth_limit: usize,
-        )
-            -> Option<ProposalAssertions>
-        {
-            let mut res = None;
-            traverse_batch_tree::<T, _, _>(&batch, |node: BatchTreeNode<&BatchItem>| {
-                if node.depth > depth_limit {
-                    res = Some(ProposalAssertions::DepthLimit);
-                    return Some(StopTraverse)
-                }
-                if let BatchItemKind::Decide(id) = BatchItemKindT::<T>::kind(node.data) {
-                    if id == proposal_id {
-                        res = Some(ProposalAssertions::SelfReference);
-                        return Some(StopTraverse)
-                    }
-                }
-                None
-            });
-            res
-        }
-    }
-    
-    pub type ProposalBatchX<Item> = Vec<Item>;
-    
-    use batch_item_kind::*;
-    #[doc(no_inline)]
-    /// Module contains classification of the proposal batch item
-    pub mod batch_item_kind {
-        use frame_support::traits::IsSubType;
-        use super::{Config, Call, ProposalId};
-        use crate::{ProposalBatchX, BatchItem};
-
-        /// Batch item kinds
-        pub enum BatchItemKind<'a, Item> {
-            /// Batch item contains `propose` dispatchable
-            Propose(&'a ProposalBatchX<Item>),
-            /// Batch item contains `decide` dispatchable
-            Decide(&'a ProposalId),
-            Other
-        }
-        pub trait BatchItemKindT<T: Config>: Sized {
-            fn kind(&self) -> BatchItemKind<'_, Self>;
-        }
-        impl<T: Config> BatchItemKindT<T> for BatchItem<T::DeipAccountId, <T as Config>::Call> {
-
-            fn kind(&self) -> BatchItemKind<'_, Self> {
-                match self.call.is_sub_type() {
-                    Some(Call::propose(batch, _)) => {
-                        BatchItemKind::Propose(batch)
-                    },
-                    Some(Call::decide(proposal_id, _decision)) => {
-                        BatchItemKind::Decide(proposal_id)
-                    },
-                    _ => BatchItemKind::Other
-                }
-            }
-        }
-    }
-    
-    use batch_tree::*;
-    /// Module contains operations on nested proposals
-    #[doc(no_inline)]
-    pub mod batch_tree {
-        use sp_std::collections::vec_deque::VecDeque;
-        use sp_std::prelude::*;
-        use sp_std::iter::{Peekable, Iterator};
-        use super::{Config, BatchItemKind};
-        use crate::batch_item_kind::BatchItemKindT;
-        use super::ProposalBatchX;
-
-        /// Visited tree node abstraction
-        pub struct BatchTreeNode<Data> {
-            /// Nested level
-            pub depth: usize,
-            pub data: Data,
-        }
-        
-        /// Marker-type used for traverse operation flow control 
-        pub struct StopTraverse;
-        
-        /// Batch tree traverse operation.
-        /// Invokes `visit_node` callback on each node and accepts flow-control commands from it
-        pub fn traverse_batch_tree<'a, T: Config, V, Data: BatchItemKindT<T>>(
-            root: &'a ProposalBatchX<Data>,
-            mut visit_node: V
-        )
-            where V: FnMut(BatchTreeNode<&'a Data>) -> Option<StopTraverse>,
-        {
-            let mut stack = VecDeque::<Peekable<Box<dyn Iterator<Item=&Data>>>>::new();
-            let boxed: Box<dyn Iterator<Item=&Data>> = Box::new(root.iter());
-            stack.push_front(boxed.peekable());
-            while !stack.is_empty() {
-                let depth = stack.len();
-                while let Some(data) = stack.front_mut().unwrap().next() {
-                    if visit_node(BatchTreeNode { depth, data }).is_some() {
-                        return
-                    }
-                    match BatchItemKindT::<T>::kind(data) {
-                        BatchItemKind::Propose(batch) => {
-                            let boxed: Box<dyn Iterator<Item=&Data>> = Box::new(batch.iter());
-                            stack.push_front(boxed.peekable());
-                            break
-                        },
-                        _ => ()
-                    }
-                }
-                if stack.front_mut().unwrap().peek().is_none() {
-                    stack.pop_front();
-                }
-            }
-        }
-    }
-    
-    /// Pallet's business-logic public interface
-    #[doc(no_inline)]
-    pub mod entrypoint {
-        use super::{Config, Error};
-        use super::{StorageWrite, DeipProposal, ProposalId};
-        use crate::InputProposalBatch;
-
-        /// Create proposal
-        pub fn propose<T: Config>(
-            author: T::AccountId,
-            batch: InputProposalBatch<T>,
-            external_id: Option<ProposalId>
-        )
-            -> Result<(), Error<T>> 
-        {
-            StorageWrite::<T>::new()
-                .commit(move |ops| {
-                    DeipProposal::<T>::create(
-                        batch,
-                        author,
-                        external_id,
-                        ops
-                    )
-                })
-        }
-    }
-    
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::weight(10)]
@@ -307,7 +158,7 @@ pub mod pallet {
             
             // frame_support::debug::RuntimeLogger::init();
 
-            entrypoint::propose::<T>(author, batch, external_id)?;
+            crate::entrypoint::propose::<T>(author, batch, external_id)?;
             
             Ok(Some(0).into())
         }
@@ -381,6 +232,9 @@ pub mod pallet {
         OptionQuery
     >;
     
+    #[allow(type_alias_bounds)]
+    pub type PendingProposalsMap<T: Config> = BTreeMap<ProposalId, T::AccountId>;
+    
     #[pallet::storage]
     #[pallet::getter(fn pending_proposals)]
     pub(super) type PendingProposals<T: Config> = StorageMap<_,
@@ -393,312 +247,4 @@ pub mod pallet {
     
     #[pallet::type_value]
     pub(super) fn PendingProposalsMapDefault<T: Config>() -> PendingProposalsMap<T> { Default::default() }
-    
-    // ==== Logic ====:
-
-    pub type ProposalId = sp_core::H160;
-    #[allow(type_alias_bounds)]
-    pub type PendingProposalsMap<T: Config> = BTreeMap<ProposalId, T::AccountId>;
-    
-    /// Specialized version of [`BatchItem`]
-    #[allow(type_alias_bounds)]
-    pub type ProposalBatchItemOf<T: Config> = BatchItem<
-        <T as frame_system::Config>::AccountId,
-        <T as Config>::Call
-    >;
-    
-    #[allow(type_alias_bounds)]
-    pub type InputProposalBatchItem<T: Config> = BatchItem<
-        T::DeipAccountId,
-        <T as Config>::Call
-    >;
-    
-    #[allow(type_alias_bounds)]
-    pub type ProposalBatch<T: Config> = Vec<ProposalBatchItemOf<T>>;
-    
-    #[allow(type_alias_bounds)]
-    pub type InputProposalBatch<T: Config> = Vec<InputProposalBatchItem<T>>;
-    
-    /// Proposal object
-    #[derive(Debug, Encode, Decode, Clone, Eq, PartialEq)]
-    pub struct DeipProposal<T: Config> {
-        /// Proposal ID
-        id: ProposalId,
-        /// Batch-transaction items
-        batch: ProposalBatch<T>,
-        /// Member decisions mapping
-        decisions: BTreeMap<T::AccountId, ProposalMemberDecision>,
-        /// Proposal state
-        state: ProposalState,
-        /// Proposal author
-        author: T::AccountId
-    }
-    
-    /// Proposal state
-    #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode)]
-    pub enum ProposalState {
-        /// Pending proposal
-        Pending,
-        /// Rejected proposal
-        Rejected,
-        /// Batch transaction executed successfully
-        Done,
-        /// Batch transaction execution failed
-        Failed(DispatchError)
-    }
-    
-    use storage_ops::*;
-    #[doc(no_inline)]
-    /// Module contains abstractions over pallet storage operations
-    pub mod storage_ops {
-        use sp_std::prelude::*;
-        use super::{Config, DeipProposal, Event, ProposalStorage, Pallet, PendingProposals};
-        
-        pub use pallet_deip_toolkit::storage_ops::*;
-        
-        pub type StorageWrite<T> = StorageOpsTransaction<StorageOps<T>>;
-        
-        /// Storage operations
-        pub enum StorageOps<T: Config> {
-            /// Deposit event
-            DepositEvent(Event<T>),
-            /// Create proposal
-            CreateProposal(DeipProposal<T>),
-            /// Update proposal
-            UpdateProposal(DeipProposal<T>),
-            /// Delete proposal
-            DeleteProposal(DeipProposal<T>),
-        }
-        impl<T: Config> StorageOp for StorageOps<T> {
-            fn exec(self) {
-                match self {
-                        StorageOps::DepositEvent(event) => {
-                            <Pallet<T>>::deposit_event(event);
-                        },
-                        StorageOps::CreateProposal(proposal) => {
-                            let members = proposal.decisions.keys().cloned();
-                            for m in members {
-                                PendingProposals::<T>::mutate(m, |x| {
-                                    x.insert(proposal.id, proposal.author.clone());
-                                });
-                            }
-                            <ProposalStorage<T>>::insert(proposal.author.clone(), proposal.id, proposal);
-                        },
-                        StorageOps::UpdateProposal(proposal) => {
-                            <ProposalStorage<T>>::insert(proposal.author.clone(), proposal.id, proposal)
-                        },
-                        StorageOps::DeleteProposal(proposal) => {
-                            let DeipProposal::<T> {
-                                id: proposal_id,
-                                decisions,
-                                author,
-                                .. 
-                            } = proposal;
-                            let members = decisions.keys();
-                            for m in members {
-                                PendingProposals::<T>::mutate(m, |x| {
-                                    x.remove(&proposal_id);
-                                });
-                            }
-                            <ProposalStorage<T>>::remove(author, proposal_id);
-                        },
-                    }
-            }
-        }
-    }
-    
-    /// A global extrinsic index, formed as the extrinsic index within a block, together with that
-    /// block's height. This allows a transaction in which a multisig operation of a particular
-    /// composite was created to be uniquely identified.
-    #[derive(Copy, Clone, Eq, PartialEq, Encode, Decode, Default, RuntimeDebug)]
-    struct Timepoint<BlockNumber> {
-        /// The height of the chain at the point in time.
-        height: BlockNumber,
-        /// The index of the extrinsic at the point in time.
-        index: u32,
-    }
-    
-    impl<T: Config> DeipProposal<T> {
-        /// Generate "Timepoint" aka unique proposal ID.
-        /// Implemented as hash-value of Timepoint from `pallet_multisig`   
-        fn timepoint() -> ProposalId {
-            let timepoint = Timepoint::<T::BlockNumber> {
-                height: <frame_system::Module<T>>::block_number(),
-                index: <frame_system::Module::<T>>::extrinsic_index().unwrap_or_default(),
-            }.twox_256();
-            ProposalId::from_slice(&timepoint[..20])
-        }
-        
-        /// Create proposal object.
-        /// Fail if input arguments violates proposal assertions (See [proposal_assertions](./module.proposal_assertions))
-        pub fn create(
-            batch: InputProposalBatch<T>,
-            author: T::AccountId,
-            external_id: Option<ProposalId>,
-            storage_ops: &mut StorageOpsQueue<StorageOps<T>>
-        )
-            -> Result<(), Error<T>>
-        {
-            let id = external_id.unwrap_or_else(Self::timepoint);
-            ensure!(
-                !ProposalStorage::<T>::contains_key(&author, &id),
-                Error::<T>::AlreadyExist
-            );
-            match assert_proposal::<T, _>(&batch, &id, 2) {
-                Some(ProposalAssertions::DepthLimit) => {
-                    return Err(Error::<T>::ReachDepthLimit)
-                },
-                Some(ProposalAssertions::SelfReference) => {
-                    return Err(Error::<T>::SelfReferential)
-                },
-                None => (),
-            }
-            
-            let batch: ProposalBatch<T> = batch
-                .into_iter()
-                .map(|x| {
-                    let BatchItem { account, call } = x;
-                    BatchItem {
-                        account: account.into(),
-                        call
-                    }
-                })
-                .collect();
-            
-            let decisions = BTreeMap::from_iter(
-                batch.iter().map(|x| (
-                    x.account.clone(),
-                    ProposalMemberDecision::Pending
-                ))
-            );
-            
-            let proposal = Self {
-                id,
-                batch,
-                decisions,
-                state: ProposalState::Pending,
-                author
-            };
-            storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Proposed {
-                author: proposal.author.clone(),
-                batch: proposal.batch.clone(),
-                proposal_id: proposal.id,
-            }));
-            storage_ops.push_op(StorageOps::CreateProposal(proposal));
-            Ok(())
-        }
-        
-        /// 
-        pub fn decide<BatchExec>(
-            mut self,
-            member: &T::AccountId,
-            decision: ProposalMemberDecision,
-            batch_exec: BatchExec,
-            storage_ops: &mut StorageOpsQueue<StorageOps<T>>
-        )
-            -> Result<Option<BatchExec::Output>, Error<T>>
-            where
-                BatchExec: FnOnce(ProposalBatch<T>) -> DispatchResultWithPostInfo
-        {
-            let member_decision = self.decisions.get_mut(member).ok_or(Error::<T>::NotAMember)?;
-            
-            ensure!(matches!(self.state, ProposalState::Pending), Error::<T>::AlreadyResolved);
-
-            match member_decision.decide(decision) {
-                Err(_) => return Err(Error::<T>::AlreadyResolved),
-                Ok(None) => Ok(None),
-                Ok(Some(ProposalMemberDecision::Pending)) => {
-                    storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::RevokedApproval {
-                        member: member.clone(),
-                        proposal_id: self.id
-                    }));
-                    storage_ops.push_op(StorageOps::UpdateProposal(self));
-                    Ok(None)
-                },
-                Ok(Some(ProposalMemberDecision::Reject)) => {
-                    self.state = ProposalState::Rejected;
-                    storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Resolved {
-                        member: member.clone(),
-                        proposal_id: self.id,
-                        state: self.state
-                    }));
-                    storage_ops.push_op(StorageOps::DeleteProposal(self));
-                    Ok(None)
-                },
-                Ok(Some(ProposalMemberDecision::Approve)) => {
-                    if self.ready_to_exec() {
-                        let batch_exec_result = batch_exec(self.batch.clone());
-                        self.state = if let Err(ref err) = batch_exec_result { 
-                            ProposalState::Failed(err.error.clone())
-                        } else {
-                            ProposalState::Done
-                        };
-                        storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Resolved {
-                            member: member.clone(),
-                            proposal_id: self.id,
-                            state: self.state
-                        }));
-                        storage_ops.push_op(StorageOps::DeleteProposal(self));
-                        Ok(Some(batch_exec_result))
-                    } else {
-                        storage_ops.push_op(StorageOps::DepositEvent(Event::<T>::Approved {
-                            member: member.clone(),
-                            proposal_id: self.id,
-                        }));
-                        storage_ops.push_op(StorageOps::UpdateProposal(self));
-                        Ok(None)
-                    }
-                },
-            }
-        }
-        
-        fn ready_to_exec(&self) -> bool {
-            let approved = self.decisions.values()
-                .all(|x: &ProposalMemberDecision| {
-                    matches!(x, ProposalMemberDecision::Approve)
-                });
-            approved && matches!(self.state, ProposalState::Pending)
-        }
-    }
-    
-    /// Batch item generic container
-    #[derive(Debug, Clone, Eq, PartialEq, Encode, Decode)]
-    pub struct BatchItem<Account, CallT> {
-        pub account: Account,
-        pub call: CallT,
-    }
-    
-    /// Proposal member decision
-    #[derive(Debug, Clone, Copy, Eq, PartialEq, Encode, Decode)]
-    pub enum ProposalMemberDecision {
-        /// Pending state
-        Pending,
-        /// Approved state
-        Approve,
-        /// Rejected state
-        Reject
-    }
-    impl ProposalMemberDecision {
-        /// Make decision state transition.
-        /// 
-        /// Except of transitions from `Reject` current state all another transitions are allowed.
-        /// `Ok(None)` result means transition to the same state.
-        /// 
-        /// This function must stay private to disallow state transitions from code outsides
-        /// of this module.
-        /// You should prefer to use [`DeipProposal`] object as a pallet logic's main interface
-        /// 
-        fn decide(&mut self, decision: Self) -> Result<Option<Self>, Self> {
-            let cur = self;
-            let new = &decision;
-            match (&cur, new) {
-                (Self::Reject, _) => Err(*cur),
-                _ => {
-                    let transition = cur != new;
-                    *cur = *new;
-                    if transition { Ok(Some(*cur)) } else { Ok(None) }
-                },
-            }
-        }
-    }
 }
