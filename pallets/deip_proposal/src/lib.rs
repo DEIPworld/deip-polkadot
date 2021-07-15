@@ -174,7 +174,7 @@ pub mod pallet {
             let member = ensure_signed(origin)?;
             let pending = PendingProposals::<T>::get(&member);
             let author = pending.get(&proposal_id).ok_or(Error::<T>::NotFound)?;
-            let proposal = ProposalStorage::<T>::get(author, &proposal_id).ok_or(Error::<T>::NotFound)?;
+            let proposal = ProposalRepository::<T>::get(&proposal_id).ok_or(Error::<T>::NotFound)?;
             let maybe_batch_exec_result: Option<DispatchResultWithPostInfo> =
                 StorageWrite::<T>::new()
                     .commit(|ops| {
@@ -189,19 +189,6 @@ pub mod pallet {
                 let _batch_exec_ok = batch_exec_result?;
             }
             Ok(Some(0).into())
-        }
-        
-        #[pallet::weight(10)]
-        fn explore(
-            origin: OriginFor<T>,
-        )
-            -> DispatchResultWithPostInfo
-        {
-            let _ = origin;
-            frame_support::debug::RuntimeLogger::init();
-            frame_support::debug::debug!("call_functions: {:?}", <Pallet<T>>::call_functions());
-            // unimplemented!();
-            Result::Ok(frame_support::dispatch::PostDispatchInfo { actual_weight: None, pays_fee: Default::default() })
         }
     }
 
@@ -220,12 +207,8 @@ pub mod pallet {
         }
     }
     
-    // ==== Storage ====:
-    
     #[pallet::storage]
-    pub(super) type ProposalStorage<T: Config> = StorageDoubleMap<_,
-        Blake2_128Concat,
-        T::AccountId,
+    pub(super) type ProposalRepository<T: Config> = StorageMap<_,
         Blake2_128Concat,
         ProposalId,
         DeipProposal<T>,

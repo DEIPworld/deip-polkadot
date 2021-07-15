@@ -6,7 +6,7 @@ use frame_support::Hashable;
 
 use crate::storage::{StorageOpsT, StorageOps};
 
-use super::{Config, Event, Error, ProposalStorage};
+use super::{Config, Event, Error, ProposalRepository};
 
 
 pub type ProposalId = sp_core::H160;
@@ -135,7 +135,7 @@ impl<T: Config> DeipProposal<T> {
     {
         let id = external_id.unwrap_or_else(Self::timepoint);
         ensure!(
-            !ProposalStorage::<T>::contains_key(&author, &id),
+            !ProposalRepository::<T>::contains_key(&id),
             Error::<T>::AlreadyExist
         );
         match crate::batch_assertions::assert_proposal::<T, _>(&batch, &id, 2) {
