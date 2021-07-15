@@ -40,7 +40,8 @@ use frame_support::{
     decl_module, decl_storage, decl_event, decl_error, 
     StorageMap,
     dispatch::{ DispatchResult, Parameter },
-    storage::{ IterableStorageMap, IterableStorageDoubleMap }, 
+    storage::{ IterableStorageMap, IterableStorageDoubleMap },
+    traits::Currency
 };
 use frame_system::{ self as system, ensure_signed };
 use sp_std::vec::Vec;
@@ -96,6 +97,8 @@ pub trait Config: frame_system::Config + pallet_timestamp::Config {
     type Event: From<Event<Self>> + Into<<Self as frame_system::Config>::Event>;
     
     type DeipAccountId: Into<Self::AccountId> + Parameter + Member;
+
+    type Currency: Currency<Self::AccountId>;
 }
 
 /// Unique Project ID reference
@@ -118,7 +121,8 @@ pub type ReviewOf<T> = Review<<T as system::Config>::Hash, <T as system::Config>
 pub type NdaOf<T> = Nda<<T as system::Config>::Hash, <T as system::Config>::AccountId, <T as pallet_timestamp::Config>::Moment>;
 pub type NdaAccessRequestOf<T> = NdaAccessRequest<<T as system::Config>::Hash, <T as system::Config>::AccountId>;
 pub type ProjectContentOf<T> = ProjectContent<<T as system::Config>::Hash, <T as system::Config>::AccountId>;
-pub type ProjectTokenSaleOf<T> = ProjectTokenSale<<T as pallet_timestamp::Config>::Moment>;
+pub type ProjectTokenSaleOf<T> = ProjectTokenSale<<T as pallet_timestamp::Config>::Moment, BalanceOf<T>>;
+pub type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as system::Config>::AccountId>>::Balance;
 
 /// Review 
 #[derive(Encode, Decode, Clone, Default, RuntimeDebug, PartialEq, Eq)]
@@ -189,7 +193,7 @@ impl Default for ProjectTokenSaleStatus {
 #[derive(Encode, Decode, Clone, Default, RuntimeDebug, PartialEq, Eq)]
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "std", serde(rename_all = "camelCase"))]
-pub struct ProjectTokenSale<Moment> {
+pub struct ProjectTokenSale<Moment, Balance> {
     /// Reference for external world and uniques control 
     external_id: ProjectTokenSaleId,
     /// Reference to the Project
@@ -200,9 +204,9 @@ pub struct ProjectTokenSale<Moment> {
     end_time: Moment,
     status: ProjectTokenSaleStatus,
     // how many we already got
-    total_amount: u64,
-    soft_cap: u64,
-    hard_cap: u64,
+    total_amount: Balance,
+    soft_cap: Balance,
+    hard_cap: Balance,
 }
 
 /// Digital asset. Contains information of content and authors of Digital asset.
@@ -516,8 +520,8 @@ decl_module! {
             project_id: ProjectId,
             start_time: T::Moment,
             end_time: T::Moment,
-            soft_cap: u64,
-            hard_cap: u64,
+            soft_cap: BalanceOf<T>,
+            hard_cap: BalanceOf<T>,
         ) {
             let account = ensure_signed(origin)?;
 
@@ -527,7 +531,7 @@ decl_module! {
             ensure!(start_time >= timestamp, Error::<T>::TokenSaleStartTimeMustBeLaterOrEqualCurrentMoment);
             ensure!(end_time > start_time, Error::<T>::TokenSaleEndTimeMustBeLaterStartTime);
 
-            ensure!(soft_cap > 0, Error::<T>::TokenSaleSoftCapShouldBePositive);
+            ensure!(soft_cap > 0u32.into(), Error::<T>::TokenSaleSoftCapShouldBePositive);
             ensure!(hard_cap >= soft_cap, Error::<T>::TokenSaleHardCapShouldBeGreaterOrEqualSoftCap);
 
             let projects = Projects::<T>::get();
@@ -556,7 +560,9 @@ decl_module! {
                 start_time: start_time,
                 end_time: end_time,
                 status: ProjectTokenSaleStatus::Inactive,
-                ..Default::default()
+                soft_cap: soft_cap,
+                hard_cap: hard_cap,
+                total_amount: 0u32.into(),
             };
 
             token_sales.insert(index, (project_id, ProjectTokenSaleStatus::Inactive, external_id));

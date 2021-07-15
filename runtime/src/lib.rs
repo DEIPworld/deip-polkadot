@@ -279,6 +279,7 @@ impl pallet_template::Config for Runtime {
 impl pallet_deip::Config for Runtime {
     type Event = Event;
     type DeipAccountId = deip_account::DeipAccountId<Self::AccountId>;
+	type Currency = Balances;
 }
 
 impl pallet_deip_proposal::pallet::Config for Runtime {
