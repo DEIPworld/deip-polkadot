@@ -65,10 +65,12 @@
   "ProjectContentId": "H160",
   "NdaAccessRequestId": "H160",
   "NdaId": "H160",
+  "ProjectTokenSaleId": "H160",
   "NdaOf": "Nda",
   "NdaAccessRequestOf": "NdaAccessRequest",
   "ProjectOf": "Project",
   "ProjectContentOf": "ProjectContent",
+  "ProjectTokenSaleOf": "ProjectTokenSale",
   "Nda": {
     "contract_creator": "AccountId",
     "external_id": "NdaId",
@@ -137,5 +139,23 @@
     "content": "Hash",
     "authors": "Vec<AccountId>",
     "references": "Option<Vec<ProjectContentId>>"
+  },
+  "ProjectTokenSaleStatus": {
+    "_enum": [
+      "Active",
+      "Finished",
+      "Expired",
+      "Inactive"
+    ]
+  },
+  "ProjectTokenSale": {
+    "external_id": "ProjectTokenSaleId",
+    "project_id": "ProjectId",
+    "start_time": "Moment",
+    "end_time": "Moment",
+    "status": "ProjectTokenSaleStatus",
+    "total_amount": "u64",
+    "soft_cap": "u64",
+    "hard_cap": "u64"
   }
 }

@@ -200,9 +200,9 @@ pub struct ProjectTokenSale<Moment> {
     end_time: Moment,
     status: ProjectTokenSaleStatus,
     // how many we already got
-    total_amount: (),
-    soft_cap: (),
-    hard_cap: (),
+    total_amount: u64,
+    soft_cap: u64,
+    hard_cap: u64,
 }
 
 /// Digital asset. Contains information of content and authors of Digital asset.
