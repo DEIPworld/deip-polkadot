@@ -154,8 +154,9 @@
     "start_time": "Moment",
     "end_time": "Moment",
     "status": "ProjectTokenSaleStatus",
-    "total_amount": "u64",
-    "soft_cap": "u64",
-    "hard_cap": "u64"
+    "total_amount": "Balance",
+    "soft_cap": "Balance",
+    "hard_cap": "Balance",
+    "security_tokens_on_sale": "u64"
   }
 }
