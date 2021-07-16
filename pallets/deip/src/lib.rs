@@ -209,6 +209,8 @@ pub struct ProjectTokenSale<Moment, Balance> {
     total_amount: Balance,
     soft_cap: Balance,
     hard_cap: Balance,
+    /// how many tokens supposed to sale
+    security_tokens_on_sale: u64,
 }
 
 /// Digital asset. Contains information of content and authors of Digital asset.
@@ -411,6 +413,7 @@ decl_error! {
         TokenSaleHardCapShouldBeGreaterOrEqualSoftCap,
         TokenSaleScheduledAlready,
         TokenSaleAlreadyExists,
+        TokenSaleBalanceIsNotEnough,
     }
 }
 
@@ -527,6 +530,7 @@ decl_module! {
             end_time: T::Moment,
             soft_cap: BalanceOf<T>,
             hard_cap: BalanceOf<T>,
+            security_tokens_on_sale: u64,
         ) {
             let account = ensure_signed(origin)?;
 
@@ -568,7 +572,18 @@ decl_module! {
                 soft_cap: soft_cap,
                 hard_cap: hard_cap,
                 total_amount: 0u32.into(),
+                security_tokens_on_sale: security_tokens_on_sale,
             };
+
+            ProjectTokens::mutate_exists(project_id, |maybe_project| -> DispatchResult {
+                let project = maybe_project.as_mut().ok_or(Error::<T>::NoSuchProject)?;
+
+                ensure!(security_tokens_on_sale <= project.total, Error::<T>::TokenSaleBalanceIsNotEnough);
+                project.total.checked_sub(security_tokens_on_sale).expect("total has appropriate value");
+                project.reserved.checked_add(security_tokens_on_sale).expect("reserved can't exceed total");
+
+                Ok(())
+            })?;
 
             token_sales.insert(index, (project_id, ProjectTokenSaleStatus::Inactive, external_id));
             ProjectTokenSales::put(token_sales);
